@@ -1,0 +1,37 @@
+use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fs;
+
+const SETTINGS_FILE: &str = "./logs/settings.json";
+
+#[derive(Serialize, Deserialize)]
+pub struct Settings {
+    pub language: String,
+    pub openai_api_key: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            language: "English".to_string(),
+            openai_api_key: String::new(),
+        }
+    }
+}
+
+pub fn load_settings() -> Result<Settings, Box<dyn Error>> {
+    if let Ok(metadata) = fs::metadata(SETTINGS_FILE) {
+        if metadata.is_file() {
+            let data = fs::read_to_string(SETTINGS_FILE)?;
+            let settings: Settings = serde_json::from_str(&data)?;
+            return Ok(settings);
+        }
+    }
+    Ok(Settings::default())
+}
+
+pub fn save_settings(settings: &Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let json = serde_json::to_string_pretty(settings)?;
+    fs::write(SETTINGS_FILE, json)?;
+    Ok(())
+}
