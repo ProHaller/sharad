@@ -9,41 +9,89 @@ use crate::settings::{load_settings, save_settings, Settings};
 use chrono::Local;
 use colored::*;
 use rpassword::read_password;
+use self_update::backends::github::{ReleaseList, Update};
 use std::env;
+use std::error::Error;
 use std::fs::{self, File};
 use std::io::Write;
 use tokio::signal;
 
+fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
+    println!("Checking for updates...");
+
+    // Define the repository and the binary name
+    let repo_owner = "ProHaller";
+    let repo_name = "sharad";
+    let binary_name = "sharad";
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    // Fetch the latest release info from GitHub
+    let releases = ReleaseList::configure()
+        .repo_owner(repo_owner)
+        .repo_name(repo_name)
+        .build()?
+        .fetch()?;
+
+    // Find the latest release and get the download URL
+    if let Some(release) = releases.first() {
+        println!("New version found: {}", release.version);
+
+        // Perform the update
+        Update::configure()
+            .repo_owner(repo_owner)
+            .repo_name(repo_name)
+            .bin_name(binary_name)
+            .target(self_update::get_target())
+            .show_download_progress(true)
+            .show_output(true)
+            .bin_install_path(std::env::current_exe()?.parent().unwrap())
+            .current_version(current_version)
+            .target_version_tag(release.version.as_str())
+            .build()?
+            .update()?;
+    } else {
+        println!("No new updates found.");
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Check for updates in a blocking context
+    let update_result = tokio::task::spawn_blocking(|| check_for_updates()).await?;
+    if let Err(e) = update_result {
+        eprintln!("Failed to check for updates: {}", e);
+    }
+
     let art = r#"
-           _____   .                 A            .              .   .       .
-           o o o\            .     _/_\_                                  |\
-          ------\\      .       __//...\\__                .              ||\   .
-          __ A . |\         .  <----------→     .                  .      ||||
-        HH|\. .|||                \\\|///                 ___|_           ||||
-        ||| | . \\\     A    .      |.|                  /|  .|    .      /||\
-          | | .  |||   / \          |.|     .           | | ..|          /.||.\
-        ..| | . . \\\ ||**|         |.|   _A_     ___   | | ..|         || |\ .|
-        ..| | , ,  |||||**|         |.|  /| |   /|   |  |.| ..|         || |*|*|
-        ..|.| . . . \\\|**|.  ____  |.| | | |  | |***|  |.| ..|  _____  || |*|\|\
-        ..|.| . . .  |||**| /|.. .| |.| |*|*|  | |*  | ___| ..|/|  .  | ||.|*| |\\
-        -----------,. \\\*|| |.. .|//|\\|*|*_____| **||| ||  .| | ..  |/|| |*| |\\
-        Sharad game \  ||||| |..  // A \\*/| . ..| * ||| || ..| |  .  ||||,|*| | \
-         By Roland  |\. \\\| |.. // /|\ \\ | . ..|** ||| || ..| | . . ||||.|*| |\\
-          and the    \\  ||| |, ||.| | | ||| . ..| * ||| ||  .| | ..  ||||.|*| ||||
-        Haller Family || ||| |, ||.| | | ||| . ..| * ||| || ..| | . ..||||.|*| ||||
-        ---------------------------------------------------------------------------
+        _____   .                 A            .              .   .       .
+        o o o\            .     _/_\_                                  |\
+       ------\\      .       __//...\\__                .              ||\   .
+       __ A . |\         .  <----------→     .                  .      ||||
+     HH|\. .|||                \\\|///                 ___|_           ||||
+     ||| | . \\\     A    .      |.|                  /|  .|    .      /||\
+       | | .  |||   / \          |.|     .           | | ..|          /.||.\
+     ..| | . . \\\ ||**|         |.|   _A_     ___   | | ..|         || |\ .|
+     ..| | , ,  |||||**|         |.|  /| |   /|   |  |.| ..|         || |*|*|
+     ..|.| . . . \\\|**|.  ____  |.| | | |  | |***|  |.| ..|  _____  || |*|\|\
+     ..|.| . . .  |||**| /|.. .| |.| |*|*|  | |*  | ___| ..|/|  .  | || |*| |\\
+     -----------,. \\\*|| |.. .|//|\\|*|*_____| **||| ||  .| | ..  |/|| |*| |\\
+     Sharad game \  ||||| |..  // A \\*/| . ..| * ||| || ..| |  .  ||||,|*| | \
+      By Roland  |\. \\\| |.. // /|\ \\ | . ..|** ||| || ..| | . . ||||.|*| |\\
+       and the    \\  ||| |, ||.| | | ||| . ..| * ||| ||  .| | ..  ||||.|*| ||||
+     Haller Family || ||| |, ||.| | | ||| . ..| * ||| || ..| | . ..||||.|*| ||||
+     ---------------------------------------------------------------------------
 
-                         _____ _                         _
-                        / ____| |                       | |
-                       | (___ | |__   __ _ _ __ __ _  __| |
-                        \___ \| '_ \ / _` | '__/ _` |/ _` |
-                        ____) | | | | (_| | | | (_| | (_| |
-                       |_____/|_| |_|\__,_|_|  \__,_|\__,_|
+                      _____ _                         _
+                     / ____| |                       | |
+                    | (___ | |__   __ _ _ __ __ _  __| |
+                     \___ \| '_ \ / _` | '__/ _` |/ _` |
+                     ____) | | | | (_| | | | (_| | (_| |
+                    |_____/|_| |_|\__,_|_|  \__,_|\__,_|
 
-                               Welcome to Sharad! (v 0.5)
-"#;
+                            Welcome to Sharad! (v 0.5.2)
+    "#;
 
     let intro =
         "You can quit at any time by typing \"exit\". Be aware, there is no save in Sharad.";
@@ -80,6 +128,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set the OpenAI API key from settings
     if !settings.openai_api_key.is_empty() {
         env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
+    } else {
+        println!("No OpenAI API key found in settings. Please set it in settings");
     }
 
     loop {

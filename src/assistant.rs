@@ -85,22 +85,33 @@ pub fn load_conversation_from_file() -> Result<Save, Box<dyn Error>> {
 }
 
 fn choose_assistant(assistants: Vec<(String, String)>) -> Result<String, Box<dyn Error>> {
-    println!("Available Game cartridges:");
-    for (i, (_, name)) in assistants.iter().enumerate() {
-        println!("{}: {}", i + 1, name);
+    loop {
+        println!("Available Game cartridges:");
+        for (i, (_, name)) in assistants.iter().enumerate() {
+            println!("{}: {}", i + 1, name);
+        }
+
+        print!("Choose a game cartridge by number: ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let choice: usize = match input.trim().parse() {
+            Ok(num) => num,
+            Err(_) => {
+                println!("Invalid input. Please enter a number.");
+                continue;
+            }
+        };
+
+        if choice == 0 || choice > assistants.len() {
+            println!(
+                "Invalid choice. Please choose a number between 1 and {}.",
+                assistants.len()
+            );
+        } else {
+            return Ok(assistants[choice - 1].0.clone());
+        }
     }
-
-    print!("Choose a game cartridge by number: ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let choice: usize = input.trim().parse()?;
-
-    if choice == 0 || choice > assistants.len() {
-        return Err("Invalid choice".into());
-    }
-
-    Ok(assistants[choice - 1].0.clone())
 }
 
 pub async fn list_assistants() -> Result<Vec<(String, String)>, Box<dyn Error>> {
