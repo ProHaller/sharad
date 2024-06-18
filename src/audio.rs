@@ -38,8 +38,8 @@ pub async fn generate_and_play_audio(
         )
         .await?;
     let file_name = format!("{}_{}.mp3", role, Local::now().format("%Y%m%d_%H%M%S"));
-    let file_path = Path::new("./logs").join(file_name);
-    fs::create_dir_all("./logs")?;
+    let file_path = Path::new("./data/logs").join(file_name);
+    fs::create_dir_all("./data/logs")?;
     response.save(file_path.to_str().unwrap()).await?;
 
     task::spawn_blocking(move || {
@@ -61,7 +61,7 @@ pub async fn generate_and_play_audio(
 
 pub async fn record_and_transcribe_audio() -> Result<String, Box<dyn Error>> {
     let recording_path = format!(
-        "./logs/recording_{}.wav",
+        "./data/logs/recording_{}.wav",
         chrono::Utc::now().format("%Y%m%d%H%M%S")
     );
     record_audio(&recording_path)?;

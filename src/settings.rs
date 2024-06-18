@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fs;
 
-const SETTINGS_FILE: &str = "./logs/settings.json";
+const SETTINGS_FILE: &str = "./data/logs/settings.json";
 
 #[derive(Serialize, Deserialize)]
 pub struct Settings {

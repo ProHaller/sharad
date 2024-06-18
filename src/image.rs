@@ -35,7 +35,7 @@ pub async fn generate_and_save_image(prompt: &str) -> Result<(), Box<dyn Error>>
     }
 
     // Save the generated image to the logs directory
-    let paths = response.save("./logs").await?;
+    let paths = response.save("./data/logs").await?;
 
     paths
         .iter()

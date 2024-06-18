@@ -17,7 +17,7 @@ use std::io::Write;
 use std::{error::Error, fs::File};
 use tokio::time::Duration;
 
-const SAVE_DIR: &str = "./logs/saves/";
+const SAVE_DIR: &str = "./data/logs/saves/";
 
 #[derive(Serialize)]
 struct ListAssistantsQuery {
@@ -169,7 +169,7 @@ pub async fn run_conversation_with_save(
 
     let initial_message = CreateMessageRequestArgs::default()
         .role(MessageRole::Assistant)
-        .content(format!("Welcome the player to the world and ask them who they are or want to be. Only write in the following language: {}",settings.language))
+        .content(format!("Welcome the player to the world and ask them who they are or want to be. Only write in the following language: {}", settings.language))
         .build()?;
     client
         .threads()
@@ -209,6 +209,7 @@ pub async fn run_conversation_with_save(
         _ => panic!("Unsupported content type"),
     };
     writeln!(log_file, "Assistant's response: {}", text)?;
+    println!("Assistant's response: {}", text); // Add this debug log
 
     println!(" {}", text.green());
     generate_and_play_audio(&audio, &text, "narrator").await?;
@@ -229,6 +230,7 @@ pub async fn run_conversation_with_save(
         }
 
         writeln!(log_file, "\nUser input: {}", corrected_input)?;
+        println!("User input: {}", corrected_input); // Add this debug log
 
         println!(" {}", corrected_input);
         client
@@ -275,6 +277,7 @@ pub async fn run_conversation_with_save(
             _ => panic!("Unsupported content type"),
         };
         writeln!(log_file, "Assistant's response: {}", text)?;
+        println!("Assistant's response: {}", text); // Add this debug log
 
         println!(" {}", text.green());
         generate_and_play_audio(&audio, &text, "narrator").await?;

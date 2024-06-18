@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                      ____) | | | | (_| | | | (_| | (_| |
                     |_____/|_| |_|\__,_|_|  \__,_|\__,_|
 
-                            Welcome to Sharad! (v 0.5.2)
+                            Welcome to Sharad! (0.5.2)
     "#;
 
     let intro = "You can quit at any time by saying \"exit\".";
@@ -98,8 +98,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", art.green());
     println!("{}", intro.yellow());
 
-    fs::create_dir_all("./logs")?;
-    let log_file_path = format!("./logs/log_{}.txt", Local::now().format("%Y%m%d_%H%M%S"));
+    fs::create_dir_all("./data/logs")?;
+    let log_file_path = format!(
+        "./data/logs/log_{}.txt",
+        Local::now().format("%Y%m%d_%H%M%S")
+    );
     let mut log_file = match File::create(&log_file_path) {
         Ok(file) => file,
         Err(e) => {
@@ -128,7 +131,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !settings.openai_api_key.is_empty() {
         env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
     } else {
-        println!("No OpenAI API key found in settings. Please set it in settings");
+        println!("Enter your OpenAI API Key: ");
+        let api_key = read_password()?;
+        settings.openai_api_key = api_key;
+        println!("OpenAI API Key updated.");
+        // Update the environment variable
+        env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
+        save_settings(&settings);
     }
 
     loop {
@@ -136,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("1. Start a new game");
         println!("2. Load a game");
         println!("3. Settings");
-        println!("4. Exit");
+        println!("0. Exit");
 
         let choice = utils::get_user_input("Enter your choice: ");
 
@@ -159,6 +168,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Err(e);
                     }
                 }
+                let err = "No save files found.";
+                println!("{}", err.red());
             }
             "3" => {
                 if let Err(e) = change_settings(&mut settings) {
@@ -166,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err(e);
                 }
             }
-            "4" => {
+            "0" => {
                 writeln!(log_file, "Exiting game.")?;
                 break;
             }
@@ -188,7 +199,7 @@ fn change_settings(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Settings Menu");
     println!("1. Change Language");
-    println!("2. Set OpenAI API Key");
+    println!("2. Change OpenAI API Key");
     println!("0. Back to Main Menu");
 
     let choice = utils::get_user_input("Enter your choice: ");
