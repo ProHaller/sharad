@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                      ____) | | | | (_| | | | (_| | (_| |
                     |_____/|_| |_|\__,_|_|  \__,_|\__,_|
 
-                            Welcome to Sharad! (0.5.2)
+                            Welcome to Sharad! (0.5.3)
     "#;
 
     let intro = "You can quit at any time by saying \"exit\".";
