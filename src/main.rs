@@ -93,8 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Welcome to Sharad! (v 0.5.2)
     "#;
 
-    let intro =
-        "You can quit at any time by typing \"exit\". Be aware, there is no save in Sharad.";
+    let intro = "You can quit at any time by saying \"exit\".";
 
     println!("{}", art.green());
     println!("{}", intro.yellow());
