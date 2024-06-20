@@ -8,8 +8,10 @@ use crate::assistant::{load_conversation_from_file, run_conversation, run_conver
 use crate::settings::{load_settings, save_settings, Settings};
 use chrono::Local;
 use colored::*;
+use core::cmp::Ordering;
 use rpassword::read_password;
 use self_update::backends::github::{ReleaseList, Update};
+use semver::Version;
 use std::env;
 use std::error::Error;
 use std::fs::{self, File};
@@ -34,21 +36,36 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Find the latest release and get the download URL
     if let Some(release) = releases.first() {
-        println!("New version found: {}", release.version);
+        println!("Newest version found: {}", release.version);
 
-        // Perform the update
-        Update::configure()
-            .repo_owner(repo_owner)
-            .repo_name(repo_name)
-            .bin_name(binary_name)
-            .target(self_update::get_target())
-            .show_download_progress(true)
-            .show_output(true)
-            .bin_install_path(std::env::current_exe()?.parent().unwrap())
-            .current_version(current_version)
-            .target_version_tag(release.version.as_str())
-            .build()?
-            .update()?;
+        let latest_version = Version::parse(&release.version)?;
+        let current_version = Version::parse(current_version)?;
+
+        match latest_version.cmp(&current_version) {
+            Ordering::Greater => {
+                println!("Updating to new version: {}", release.version);
+
+                // Perform the update
+                Update::configure()
+                    .repo_owner(repo_owner)
+                    .repo_name(repo_name)
+                    .bin_name(binary_name)
+                    .target(self_update::get_target())
+                    .show_download_progress(true)
+                    .show_output(true)
+                    .bin_install_path(std::env::current_exe()?.parent().unwrap())
+                    .current_version(&current_version.to_string())
+                    .target_version_tag(&release.version)
+                    .build()?
+                    .update()?;
+            }
+            Ordering::Equal => {
+                println!("Current version is up to date.");
+            }
+            Ordering::Less => {
+                println!("You're in the future.");
+            }
+        }
     } else {
         println!("No new updates found.");
     }
@@ -59,7 +76,7 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check for updates in a blocking context
-    let update_result = tokio::task::spawn_blocking(|| check_for_updates()).await?;
+    let update_result = tokio::task::spawn_blocking(check_for_updates).await?;
     if let Err(e) = update_result {
         eprintln!("Failed to check for updates: {}", e);
     }
@@ -89,14 +106,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                      \___ \| '_ \ / _` | '__/ _` |/ _` |
                      ____) | | | | (_| | | | (_| | (_| |
                     |_____/|_| |_|\__,_|_|  \__,_|\__,_|
-
-                            Welcome to Sharad! (0.5.3)
     "#;
 
+    let welcome = "Welcome to Sharad v";
+    let version = env!("CARGO_PKG_VERSION");
     let intro = "You can quit at any time by saying \"exit\".";
 
-    println!("{}", art.green());
-    println!("{}", intro.yellow());
+    println!("{:^80}", art.green());
+    println!("{:^80}", format!("{}{}", welcome.green(), version.cyan()));
+    println!("{:^80}", intro.yellow());
 
     fs::create_dir_all("./data/logs")?;
     let log_file_path = format!(
@@ -137,14 +155,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("OpenAI API Key updated.");
         // Update the environment variable
         env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
-        save_settings(&settings);
+        let _ = save_settings(&settings);
     }
 
     loop {
         println!("Main Menu");
         println!("1. Start a new game");
         println!("2. Load a game");
-        println!("3. Settings");
+        println!("3. Create an image");
+        println!("4. Settings");
         println!("0. Exit");
 
         let choice = utils::get_user_input("Enter your choice: ");
@@ -172,6 +191,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", err.red());
             }
             "3" => {
+                let prompt = utils::get_user_input("What image would you like to generate? ");
+                let _ = image::generate_and_save_image(&prompt).await;
+            }
+            "4" => {
                 if let Err(e) = change_settings(&mut settings) {
                     eprintln!("Failed to change settings: {}", e);
                     return Err(e);

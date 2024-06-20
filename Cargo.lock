@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "sharad"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "async-openai",
  "bytes",
@@ -2558,6 +2558,7 @@ dependencies = [
  "rpassword",
  "rustyline",
  "self_update",
+ "semver",
  "serde",
  "serde_json",
  "sys",

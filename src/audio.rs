@@ -100,11 +100,11 @@ fn record_audio(file_path: &str) -> Result<(), Box<dyn Error>> {
     let writer = Arc::new(Mutex::new(hound::WavWriter::create(file_path, spec)?));
     let writer_clone = writer.clone();
 
-    println!("Press Enter to start recording...");
+    println!("{:^80}", "Press Enter to start recording...");
     let mut input = String::new();
     stdin().read_line(&mut input)?;
 
-    println!("Recording... Press Enter to stop.");
+    println!("{:^80}", "Recording... Press Enter to stop.");
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
@@ -149,7 +149,7 @@ fn record_audio(file_path: &str) -> Result<(), Box<dyn Error>> {
 
     stdin().read_line(&mut input)?;
     drop(stream);
-    println!("Recording stopped.");
+    println!("{:^80}", "Recording stopped.");
     Ok(())
 }
 
