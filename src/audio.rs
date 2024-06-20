@@ -21,10 +21,15 @@ pub async fn generate_and_play_audio(
     text: &str,
     role: &str,
 ) -> Result<(), Box<dyn Error>> {
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    if !settings.audio_output_enabled {
+        return Ok(());
+    }
+
     let voice = match role {
         "user" => Voice::Shimmer,
         "narrator" => Voice::Nova,
-        _ => Voice::Nova, // Default to Nova if role is not recognized
+        _ => Voice::Nova,
     };
 
     let response = audio

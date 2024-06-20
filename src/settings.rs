@@ -8,6 +8,7 @@ const SETTINGS_FILE: &str = "./data/logs/settings.json";
 pub struct Settings {
     pub language: String,
     pub openai_api_key: String,
+    pub audio_output_enabled: bool,
 }
 
 impl Default for Settings {
@@ -15,6 +16,7 @@ impl Default for Settings {
         Settings {
             language: "English".to_string(),
             openai_api_key: String::new(),
+            audio_output_enabled: true,
         }
     }
 }

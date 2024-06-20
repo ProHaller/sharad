@@ -6,6 +6,7 @@ mod utils;
 
 use crate::assistant::{load_conversation_from_file, run_conversation, run_conversation_with_save};
 use crate::settings::{load_settings, save_settings, Settings};
+use async_openai::Client;
 use chrono::Local;
 use colored::*;
 use core::cmp::Ordering;
@@ -15,6 +16,7 @@ use semver::Version;
 use std::env;
 use std::error::Error;
 use std::fs::{self, File};
+use std::io;
 use std::io::Write;
 use tokio::signal;
 
@@ -71,6 +73,36 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     Ok(())
+}
+
+async fn validate_openai_key(settings: &mut Settings) -> Result<(), Box<dyn std::error::Error>> {
+    while settings.openai_api_key.is_empty() || !is_valid_key(&settings.openai_api_key).await {
+        eprintln!("{}", "Invalid API Key".red());
+        print!("Enter your OpenAI API Key: ");
+        io::stdout().flush()?; // Ensure the prompt is displayed immediately
+        let api_key = read_password()?;
+        settings.openai_api_key = api_key;
+
+        if is_valid_key(&settings.openai_api_key).await {
+            io::stdout().flush()?; // Ensure the prompt is displayed immediately
+            let _ = save_settings(settings);
+            break;
+        } else {
+            eprintln!("{}", "Invalid API Key".red());
+            io::stdout().flush()?; // Ensure the prompt is displayed immediately
+            settings.openai_api_key.clear(); // Clear the invalid API key
+        }
+    }
+    println!("{}", "API Key is valid.".green());
+    io::stdout().flush()?; // Ensure the prompt is displayed immediately
+    Ok(())
+}
+
+async fn is_valid_key(api_key: &str) -> bool {
+    env::set_var("OPENAI_API_KEY", api_key);
+    let client = Client::new();
+
+    client.models().list().await.is_ok()
 }
 
 #[tokio::main]
@@ -146,17 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Set the OpenAI API key from settings
-    if !settings.openai_api_key.is_empty() {
-        env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
-    } else {
-        println!("Enter your OpenAI API Key: ");
-        let api_key = read_password()?;
-        settings.openai_api_key = api_key;
-        println!("OpenAI API Key updated.");
-        // Update the environment variable
-        env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
-        let _ = save_settings(&settings);
-    }
+    validate_openai_key(&mut settings).await?;
 
     loop {
         println!("Main Menu");
@@ -195,7 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = image::generate_and_save_image(&prompt).await;
             }
             "4" => {
-                if let Err(e) = change_settings(&mut settings) {
+                if let Err(e) = change_settings(&mut settings).await {
                     eprintln!("Failed to change settings: {}", e);
                     return Err(e);
                 }
@@ -217,12 +239,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn change_settings(
+async fn change_settings(
     settings: &mut Settings,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Settings Menu");
-    println!("1. Change Language");
+    println!("1. Change Language. Language = {}", settings.language);
     println!("2. Change OpenAI API Key");
+    println!(
+        "3. Audio input and Output. {}",
+        settings.audio_output_enabled
+    );
     println!("0. Back to Main Menu");
 
     let choice = utils::get_user_input("Enter your choice: ");
@@ -234,12 +260,23 @@ fn change_settings(
             println!("Language changed to {}.", settings.language);
         }
         "2" => {
-            println!("Enter your OpenAI API Key: ");
+            settings.openai_api_key.clear(); // Clear the invalid API key
+            print!("Enter your OpenAI API Key: ");
+            io::stdout().flush()?; // Ensure the prompt is displayed immediately
             let api_key = read_password()?;
             settings.openai_api_key = api_key;
-            println!("OpenAI API Key updated.");
-            // Update the environment variable
-            env::set_var("OPENAI_API_KEY", &settings.openai_api_key);
+            let _ = validate_openai_key(settings).await;
+        }
+        "3" => {
+            settings.audio_output_enabled = !settings.audio_output_enabled;
+            println!(
+                "Audio Output is now {}.",
+                if settings.audio_output_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            );
         }
         "0" => return Ok(()),
         _ => println!("Invalid choice. Please enter a valid number."),
