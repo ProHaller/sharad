@@ -4,7 +4,9 @@ mod image;
 mod settings;
 mod utils;
 
-use crate::assistant::{load_conversation_from_file, run_conversation, run_conversation_with_save};
+use crate::assistant::{
+    load_conversation_from_file, run_conversation, run_conversation_with_save, run_test,
+};
 use crate::settings::{load_settings, save_settings, Settings};
 use async_openai::Client;
 use chrono::Local;
@@ -186,6 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("2. Load a game");
         println!("3. Create an image");
         println!("4. Settings");
+        println!("9. Test");
         println!("0. Exit");
 
         let choice = utils::get_user_input("Enter your choice: ");
@@ -209,8 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Err(e);
                     }
                 }
-                let err = "No save files found.";
-                println!("{}", err.red());
+                println!("{}", "No save files found.".red());
             }
             "3" => {
                 let prompt = utils::get_user_input("What image would you like to generate? ");
@@ -221,6 +223,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("Failed to change settings: {}", e);
                     return Err(e);
                 }
+            }
+            "9" => {
+                println!("What did you excpect!?");
+                run_test(&mut log_file).await?;
             }
             "0" => {
                 writeln!(log_file, "Exiting game.")?;

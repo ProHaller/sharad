@@ -30,6 +30,12 @@ pub struct Save {
     pub thread_id: String,
 }
 
+pub async fn run_test(log_file: &mut File) -> Result<(), Box<dyn Error>> {
+    // let save = load_conversation_from_file();
+    // let assistant_id = save.assistant_id;
+    unimplemented!()
+}
+
 pub fn save_conversation(assistant_id: &str, thread_id: &str) -> Result<(), Box<dyn Error>> {
     let save_name = crate::utils::get_user_input("Enter a name for the save file: ");
     let save_file = format!("{}{}.json", SAVE_DIR, save_name);
@@ -209,7 +215,6 @@ pub async fn run_conversation_with_save(
         _ => panic!("Unsupported content type"),
     };
     writeln!(log_file, "Assistant's response: {}", text)?;
-    println!("Assistant's response: {}", text); // Add this debug log
 
     println!(" {}", text.green());
     generate_and_play_audio(&audio, &text, "narrator").await?;
@@ -217,7 +222,6 @@ pub async fn run_conversation_with_save(
     writeln!(log_file, "Conversation started.")?;
 
     loop {
-        print!("🎤");
         let user_input = record_and_transcribe_audio().await?;
         let corrected_input = correct_input(&user_input)?;
         if corrected_input.trim().is_empty() {
@@ -230,7 +234,6 @@ pub async fn run_conversation_with_save(
         }
 
         writeln!(log_file, "\nUser input: {}", corrected_input)?;
-        println!("User input: {}", corrected_input); // Add this debug log
 
         println!(" {}", corrected_input);
         client
@@ -277,7 +280,6 @@ pub async fn run_conversation_with_save(
             _ => panic!("Unsupported content type"),
         };
         writeln!(log_file, "Assistant's response: {}", text)?;
-        println!("Assistant's response: {}", text); // Add this debug log
 
         println!(" {}", text.green());
         generate_and_play_audio(&audio, &text, "narrator").await?;
