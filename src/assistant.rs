@@ -1,4 +1,6 @@
 use crate::audio::{generate_and_play_audio, record_and_transcribe_audio};
+use crate::display::Display;
+use crate::error::SharadError;
 use crate::settings::load_settings;
 use crate::utils::correct_input;
 use async_openai::types::ListAssistantsResponse;
@@ -11,18 +13,14 @@ use async_openai::{
 };
 use colored::*;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io;
+use std::fs::{self, File};
 use std::io::Write;
-use std::{error::Error, fs::File};
 use tokio::time::Duration;
 
 const SAVE_DIR: &str = "./data/logs/saves/";
 
 #[derive(Serialize)]
-struct ListAssistantsQuery {
-    // Add fields as needed for your query, for now, we'll use an empty struct
-}
+struct ListAssistantsQuery {}
 
 #[derive(Serialize, Deserialize)]
 pub struct Save {
@@ -30,27 +28,26 @@ pub struct Save {
     pub thread_id: String,
 }
 
-pub async fn run_test(log_file: &mut File) -> Result<(), Box<dyn Error>> {
-    // let save = load_conversation_from_file();
-    // let assistant_id = save.assistant_id;
-    unimplemented!()
-}
-
-pub fn save_conversation(assistant_id: &str, thread_id: &str) -> Result<(), Box<dyn Error>> {
-    let save_name = crate::utils::get_user_input("Enter a name for the save file: ");
+pub fn save_conversation(
+    assistant_id: &str,
+    thread_id: &str,
+    display: &Display,
+) -> Result<(), SharadError> {
+    let save_name = display.get_user_input("Enter a name for the save file:");
     let save_file = format!("{}{}.json", SAVE_DIR, save_name);
     let save = Save {
         assistant_id: assistant_id.to_string(),
         thread_id: thread_id.to_string(),
     };
     let json = serde_json::to_string(&save)?;
-    fs::create_dir_all(SAVE_DIR)?; // Create the directory if it doesn't exist
-    let mut file = fs::File::create(save_file)?;
+    fs::create_dir_all(SAVE_DIR)?;
+    let mut file = File::create(save_file)?;
     file.write_all(json.as_bytes())?;
+    display.print_wrapped("Game saved successfully.", Color::Green);
     Ok(())
 }
 
-pub fn load_conversation_from_file() -> Result<Save, Box<dyn Error>> {
+pub fn load_conversation_from_file(display: &Display) -> Result<Save, SharadError> {
     let save_files: Vec<_> = fs::read_dir(SAVE_DIR)?
         .filter_map(|entry| {
             entry.ok().and_then(|e| {
@@ -68,19 +65,19 @@ pub fn load_conversation_from_file() -> Result<Save, Box<dyn Error>> {
         .collect();
 
     if save_files.is_empty() {
-        return Err("No save files found.".into());
+        return Err(SharadError::Other("No save files found.".into()));
     }
 
-    println!("Available save files:");
+    display.print_wrapped("Available save files:", Color::Yellow);
     for (index, save_file) in save_files.iter().enumerate() {
-        println!("{}. {}", index + 1, save_file);
+        display.print_wrapped(&format!("{}. {}", index + 1, save_file), Color::White);
     }
 
     let choice = loop {
-        let input = crate::utils::get_user_input("Enter the number of the save file to load: ");
+        let input = display.get_user_input("Enter the number of the save file to load:");
         match input.trim().parse::<usize>() {
             Ok(num) if num > 0 && num <= save_files.len() => break num,
-            _ => println!("Invalid choice. Please enter a valid number."),
+            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
         }
     };
 
@@ -90,41 +87,29 @@ pub fn load_conversation_from_file() -> Result<Save, Box<dyn Error>> {
     Ok(save)
 }
 
-fn choose_assistant(assistants: Vec<(String, String)>) -> Result<String, Box<dyn Error>> {
+async fn choose_assistant(
+    assistants: Vec<(String, String)>,
+    display: &Display,
+) -> Result<String, SharadError> {
+    display.print_wrapped("Available Game cartridges:", Color::Yellow);
+    for (i, (_, name)) in assistants.iter().enumerate() {
+        display.print_wrapped(&format!("{}: {}", i + 1, name), Color::White);
+    }
+
     loop {
-        println!("Available Game cartridges:");
-        for (i, (_, name)) in assistants.iter().enumerate() {
-            println!("{}: {}", i + 1, name);
-        }
-
-        print!("Choose a game cartridge by number: ");
-        io::stdout().flush()?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let choice: usize = match input.trim().parse() {
-            Ok(num) => num,
-            Err(_) => {
-                println!("Invalid input. Please enter a number.");
-                continue;
+        let input = display.get_user_input("Choose a game cartridge by number:");
+        match input.trim().parse::<usize>() {
+            Ok(num) if num > 0 && num <= assistants.len() => {
+                return Ok(assistants[num - 1].0.clone())
             }
-        };
-
-        if choice == 0 || choice > assistants.len() {
-            println!(
-                "Invalid choice. Please choose a number between 1 and {}.",
-                assistants.len()
-            );
-        } else {
-            return Ok(assistants[choice - 1].0.clone());
+            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
         }
     }
 }
 
-pub async fn list_assistants() -> Result<Vec<(String, String)>, Box<dyn Error>> {
+pub async fn list_assistants() -> Result<Vec<(String, String)>, SharadError> {
     let client = Client::new();
-    let query = ListAssistantsQuery {
-        // Initialize any required query parameters here
-    };
+    let query = ListAssistantsQuery {};
     let response: ListAssistantsResponse = client.assistants().list(&query).await?;
 
     let assistants = response
@@ -139,93 +124,91 @@ pub async fn list_assistants() -> Result<Vec<(String, String)>, Box<dyn Error>> 
 pub async fn run_conversation(
     log_file: &mut File,
     is_new_game: bool,
-) -> Result<(), Box<dyn Error>> {
+    display: &Display,
+) -> Result<(), SharadError> {
     let (assistant_id, thread_id) = if is_new_game {
         let assistants = list_assistants().await?;
         if assistants.is_empty() {
-            println!("No game cartridge available.");
+            display.print_wrapped("No game cartridge available.", Color::Red);
             return Ok(());
         }
 
-        let assistant_id = choose_assistant(assistants)?;
+        let assistant_id = choose_assistant(assistants, display).await?;
 
         let client = Client::new();
         let thread = client
             .threads()
             .create(CreateThreadRequestArgs::default().build()?)
             .await?;
-        save_conversation(&assistant_id, &thread.id)?;
+        save_conversation(&assistant_id, &thread.id, display)?;
         (assistant_id, thread.id)
     } else {
-        let save = load_conversation_from_file()?;
+        let save = load_conversation_from_file(display)?;
         (save.assistant_id, save.thread_id)
     };
 
-    run_conversation_with_save(log_file, assistant_id, thread_id).await
+    run_conversation_with_save(log_file, assistant_id, thread_id, display).await
 }
 
 pub async fn run_conversation_with_save(
     log_file: &mut File,
     assistant_id: String,
     thread_id: String,
-) -> Result<(), Box<dyn Error>> {
+    display: &Display,
+) -> Result<(), SharadError> {
     let client = Client::new();
     let audio = Audio::new(&client);
     let settings = load_settings().unwrap_or_default();
 
-    let initial_message = CreateMessageRequestArgs::default()
-        .role(MessageRole::Assistant)
-        .content(format!("Welcome the player to the world and ask them who they are or want to be. Only write in the following language: {}", settings.language))
-        .build()?;
-    client
-        .threads()
-        .messages(&thread_id)
-        .create(initial_message.clone())
-        .await?;
-    let run_request = CreateRunRequestArgs::default()
-        .assistant_id(&assistant_id)
-        .parallel_tool_calls(false)
-        .build()?;
-    let run = client
-        .threads()
-        .runs(&thread_id)
-        .create(run_request)
-        .await?;
+    display.print_header("Welcome back to the Adventure");
 
-    while client
-        .threads()
-        .runs(&thread_id)
-        .retrieve(&run.id)
-        .await?
-        .status
-        == RunStatus::InProgress
-    {
-        print!("-");
-        std::io::stdout().flush()?;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+    // Retrieve all messages from the thread
+    let mut all_messages = Vec::new();
+    let mut before: Option<String> = None;
+    loop {
+        let mut params = vec![("order", "desc"), ("limit", "100")];
+        if let Some(before_id) = &before {
+            params.push(("before", before_id));
+        }
+        let messages = client.threads().messages(&thread_id).list(&params).await?;
+        all_messages.extend(messages.data.into_iter().rev());
+        if messages.has_more {
+            before = messages.first_id;
+        } else {
+            break;
+        }
     }
 
-    let response = client
-        .threads()
-        .messages(&thread_id)
-        .list(&[] as &[(&str, &str)])
-        .await?;
-    let text = match response.data.first().unwrap().content.first().unwrap() {
-        MessageContent::Text(text) => text.text.value.clone(),
-        _ => panic!("Unsupported content type"),
-    };
-    writeln!(log_file, "Assistant's response: {}", text)?;
-
-    println!(" {}", text.green());
-    generate_and_play_audio(&audio, &text, "narrator").await?;
-
-    writeln!(log_file, "Conversation started.")?;
+    // Display all messages
+    display.print_wrapped("Previous conversation:", Color::Yellow);
+    for message in &all_messages {
+        let role = match message.role {
+            MessageRole::User => "You",
+            MessageRole::Assistant => "Game",
+            _ => "System",
+        };
+        display.print_separator(Color::Cyan);
+        display.print_wrapped(&format!("{}: ", role), Color::Yellow);
+        if let Some(MessageContent::Text(text_content)) = message.content.first() {
+            display.print_wrapped(
+                &text_content.text.value,
+                if role == "You" {
+                    Color::Blue
+                } else {
+                    Color::Green
+                },
+            );
+        }
+    }
+    display.print_separator(Color::Cyan);
+    display.print_wrapped("End of previous conversation.", Color::Yellow);
 
     loop {
-        let user_input = record_and_transcribe_audio().await?;
+        // Get user input
+        let user_input = record_and_transcribe_audio(display).await?;
         let corrected_input = correct_input(&user_input)?;
         if corrected_input.trim().is_empty() {
-            println!("Input cannot be empty. Please try again.");
+            display.print_wrapped("Input cannot be empty. Please try again.", Color::Red);
             continue;
         }
 
@@ -235,14 +218,18 @@ pub async fn run_conversation_with_save(
 
         writeln!(log_file, "\nUser input: {}", corrected_input)?;
 
-        println!(" {}", corrected_input);
+        display.print_separator(Color::Magenta);
+        display.print_wrapped(&corrected_input, Color::Blue);
+        display.print_separator(Color::Magenta);
+
+        // Send user message
         client
             .threads()
             .messages(&thread_id)
             .create(
                 CreateMessageRequestArgs::default()
                     .role(MessageRole::User)
-                    .content(corrected_input.clone())
+                    .content(corrected_input)
                     .build()?,
             )
             .await?;
@@ -257,33 +244,46 @@ pub async fn run_conversation_with_save(
             .create(run_request)
             .await?;
 
-        while client
-            .threads()
-            .runs(&thread_id)
-            .retrieve(&run.id)
-            .await?
-            .status
-            == RunStatus::InProgress
-        {
-            print!("-");
-            std::io::stdout().flush()?;
+        // Wait for the run to complete
+        display.print_thinking();
+        loop {
+            let run_status = client.threads().runs(&thread_id).retrieve(&run.id).await?;
+
+            if run_status.status == RunStatus::Completed {
+                break;
+            } else if run_status.status == RunStatus::Failed {
+                return Err(SharadError::Other("Run failed".to_string()));
+            }
+
+            display.print_thinking_dot();
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        display.clear_thinking();
 
-        let response = client
+        // Retrieve only the latest message
+        let messages = client
             .threads()
             .messages(&thread_id)
-            .list(&[] as &[(&str, &str)])
+            .list(&[("limit", "1")])
             .await?;
-        let text = match response.data.first().unwrap().content.first().unwrap() {
-            MessageContent::Text(text) => text.text.value.clone(),
-            _ => panic!("Unsupported content type"),
-        };
-        writeln!(log_file, "Assistant's response: {}", text)?;
 
-        println!(" {}", text.green());
-        generate_and_play_audio(&audio, &text, "narrator").await?;
+        if let Some(latest_message) = messages.data.first() {
+            if latest_message.role == MessageRole::Assistant {
+                if let Some(MessageContent::Text(text_content)) = latest_message.content.first() {
+                    let response_text = &text_content.text.value;
+                    writeln!(log_file, "Assistant's response: {}", response_text)?;
+
+                    display.print_separator(Color::Cyan);
+                    display.print_wrapped(response_text, Color::Green);
+                    display.print_separator(Color::Cyan);
+
+                    generate_and_play_audio(&audio, response_text, "narrator").await?;
+                }
+            }
+        }
     }
+
+    display.print_footer("Thank you for playing!");
 
     writeln!(log_file, "Conversation ended.")?;
     log_file.sync_all()?;

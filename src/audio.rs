@@ -1,3 +1,5 @@
+use crate::display::Display;
+use crate::Color;
 use async_openai::{
     config::OpenAIConfig,
     types::{CreateSpeechRequestArgs, CreateTranscriptionRequestArgs, SpeechModel, Voice},
@@ -9,9 +11,7 @@ use crossterm::event::{poll, read, Event, KeyCode};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use rodio::{Decoder, OutputStream, Sink};
 use std::fs::File;
-
 use std::io::BufReader;
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -72,17 +72,18 @@ pub async fn generate_and_play_audio(
     Ok(())
 }
 
-pub async fn record_and_transcribe_audio() -> Result<String, Box<dyn Error>> {
+pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Box<dyn Error>> {
     let recording_path = format!(
         "./data/logs/recording_{}.wav",
         chrono::Utc::now().format("%Y%m%d%H%M%S")
     );
-    record_audio(&recording_path)?;
+    record_audio(&recording_path, display)?;
 
     let client =
         Client::with_config(OpenAIConfig::default().with_api_key(env::var("OPENAI_API_KEY")?));
     let audio = Audio::new(&client);
 
+    display.print_wrapped("Transcribing audio...", Color::Yellow);
     let transcription = audio
         .transcribe(
             CreateTranscriptionRequestArgs::default()
@@ -94,7 +95,7 @@ pub async fn record_and_transcribe_audio() -> Result<String, Box<dyn Error>> {
     Ok(transcription.text)
 }
 
-fn record_audio(file_path: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn record_audio(file_path: &str, display: &Display) -> Result<String, Box<dyn std::error::Error>> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -181,7 +182,7 @@ fn record_audio(file_path: &str) -> Result<String, Box<dyn std::error::Error>> {
 
     enable_raw_mode()?;
 
-    println!("Hold Space to record");
+    display.print_wrapped("Hold Space to record", Color::Yellow);
 
     loop {
         if poll(Duration::from_millis(10))? {
@@ -205,8 +206,6 @@ fn record_audio(file_path: &str) -> Result<String, Box<dyn std::error::Error>> {
                     if duration >= minimum_duration {
                         is_recording.store(false, Ordering::Relaxed);
                         break;
-                    } else {
-                        std::io::stdout().flush()?;
                     }
                 }
             }
@@ -228,13 +227,15 @@ fn record_audio(file_path: &str) -> Result<String, Box<dyn std::error::Error>> {
     if let Some(start) = recording_start {
         let duration = start.elapsed();
         if duration < minimum_duration {
-            std::fs::remove_file(file_path)?; // Delete the file
-            Ok(String::new()) // Return empty string
+            display.print_wrapped("Recording too short. Discarding.", Color::Red);
+            std::fs::remove_file(file_path)?;
+            Ok(String::new())
         } else {
-            Ok(file_path.to_string()) // Return the file path
+            display.print_wrapped("", Color::Green);
+            Ok(file_path.to_string())
         }
     } else {
-        Ok(String::new()) // Return empty string
+        Ok(String::new())
     }
 }
 

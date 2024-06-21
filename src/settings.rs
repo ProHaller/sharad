@@ -1,5 +1,5 @@
+use crate::error::SharadError;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::fs;
 
 const SETTINGS_FILE: &str = "./data/logs/settings.json";
@@ -21,7 +21,7 @@ impl Default for Settings {
     }
 }
 
-pub fn load_settings() -> Result<Settings, Box<dyn Error>> {
+pub fn load_settings() -> Result<Settings, SharadError> {
     if let Ok(metadata) = fs::metadata(SETTINGS_FILE) {
         if metadata.is_file() {
             let data = fs::read_to_string(SETTINGS_FILE)?;
@@ -32,7 +32,7 @@ pub fn load_settings() -> Result<Settings, Box<dyn Error>> {
     Ok(Settings::default())
 }
 
-pub fn save_settings(settings: &Settings) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub fn save_settings(settings: &Settings) -> Result<(), SharadError> {
     let json = serde_json::to_string_pretty(settings)?;
     fs::write(SETTINGS_FILE, json)?;
     Ok(())
