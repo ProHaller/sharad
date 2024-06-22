@@ -1,5 +1,6 @@
 use crate::display::Display;
 use crate::Color;
+use async_openai::error::OpenAIError;
 use async_openai::{
     config::OpenAIConfig,
     types::{CreateSpeechRequestArgs, CreateTranscriptionRequestArgs, SpeechModel, Voice},
@@ -87,16 +88,33 @@ pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Bo
         Client::with_config(OpenAIConfig::default().with_api_key(env::var("OPENAI_API_KEY")?));
     let audio = Audio::new(&client);
 
-    display.print_wrapped("Transcribing audio...", Color::Yellow);
-    let transcription = audio
+    display.print_wrapped("\nTranscribing audio...", Color::Yellow);
+
+    match audio
         .transcribe(
             CreateTranscriptionRequestArgs::default()
-                .file(recording_path)
+                .file(&recording_path)
                 .model("whisper-1")
                 .build()?,
         )
-        .await?;
-    Ok(transcription.text)
+        .await
+    {
+        Ok(transcription) => Ok(transcription.text),
+        Err(e) => {
+            if let OpenAIError::ApiError(api_err) = &e {
+                if api_err.message.contains("Audio file is too short") {
+                    if let Err(remove_err) = std::fs::remove_file(&recording_path) {
+                        display.print_wrapped(
+                            &format!("Failed to remove short audio file: {}", remove_err),
+                            Color::Red,
+                        );
+                    }
+                    return Ok(String::new());
+                }
+            }
+            Err(e.into())
+        }
+    }
 }
 
 fn record_audio(file_path: &str, display: &Display) -> Result<String, Box<dyn std::error::Error>> {

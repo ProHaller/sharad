@@ -170,6 +170,10 @@ pub async fn run_conversation(
             .role(MessageRole::User)
             .content(format!("Welcome the player to the world and ask them who they are or want to be. Always write in the following language: {}", language))
             .build()?;
+        display.print_debug(
+            &format!("Debug: Initial message: {:?}", initial_message.content),
+            Color::Magenta,
+        );
         client
             .threads()
             .messages(&thread.id)
@@ -484,7 +488,7 @@ async fn create_and_wait_for_run(
             }
             _ => {
                 display.print_thinking_dot();
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
     }
