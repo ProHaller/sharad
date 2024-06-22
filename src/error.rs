@@ -8,6 +8,7 @@ pub enum SharadError {
     OpenAI(async_openai::error::OpenAIError),
     SerdeJson(serde_json::Error),
     Other(String),
+    Message(String),
 }
 
 impl fmt::Display for SharadError {
@@ -17,6 +18,7 @@ impl fmt::Display for SharadError {
             SharadError::OpenAI(e) => write!(f, "OpenAI error: {}", e),
             SharadError::SerdeJson(e) => write!(f, "Serde JSON error: {}", e),
             SharadError::Other(e) => write!(f, "Other error: {}", e),
+            SharadError::Message(e) => write!(f, "{}", e),
         }
     }
 }

@@ -7,7 +7,7 @@ mod settings;
 mod utils;
 
 use crate::assistant::{load_conversation_from_file, run_conversation, run_conversation_with_save};
-use crate::settings::{load_settings, save_settings, Settings};
+use crate::settings::{load_and_validate_setting, save_settings, Settings};
 use async_openai::Client;
 use chrono::Local;
 use colored::*;
@@ -84,7 +84,7 @@ async fn main() -> Result<(), SharadError> {
     }
 
     let art = r#"
-     -----------------------------------------------------------------------------
+     ----------------------------------------------------------------------------- 
     |    _____   .                 A            .              .   .       .      |
     |    o o o\            .     _/_\_                                  |\        |
     |   ------\\      .       __//...\\__                .              ||\   .   |
@@ -101,7 +101,7 @@ async fn main() -> Result<(), SharadError> {
     |  By Roland  |\. \\\| |.. // /|\ \\ | . ..|** ||| || ..| | . . ||||.|*| |\\  |
     |   and the    \\  ||| |, ||.| | | ||| . ..| * ||| ||  .| | ..  ||||.|*| |||| |
     | Haller Family || ||| |, ||.| | | ||| . ..| * ||| || ..| | . ..||||.|*| |||| |
-     -----------------------------------------------------------------------------
+     ----------------------------------------------------------------------------- 
 
   _____ _                         _
  / ____| |                       | |
@@ -138,12 +138,23 @@ async fn main() -> Result<(), SharadError> {
 
     writeln!(log_file, "Sharad game started.")?;
 
-    let mut settings = match load_settings() {
-        Ok(settings) => settings,
-        Err(e) => {
-            display.print_wrapped(&format!("Failed to load settings: {}", e), Color::Red);
-            Settings::default()
-        }
+    let mut settings = Settings {
+        language: load_and_validate_setting("language", Settings::default().language, &display),
+        openai_api_key: load_and_validate_setting(
+            "openai_api_key",
+            Settings::default().openai_api_key,
+            &display,
+        ),
+        audio_output_enabled: load_and_validate_setting(
+            "audio_output_enabled",
+            Settings::default().audio_output_enabled,
+            &display,
+        ),
+        audio_input_enabled: load_and_validate_setting(
+            "audio_input_enabled",
+            Settings::default().audio_input_enabled,
+            &display,
+        ),
     };
 
     validate_openai_key(&mut settings, &display).await?;
@@ -175,6 +186,7 @@ async fn main() -> Result<(), SharadError> {
                             &mut log_file,
                             save.assistant_id,
                             save.thread_id,
+                            false,
                             &display,
                         )
                         .await
@@ -185,7 +197,7 @@ async fn main() -> Result<(), SharadError> {
                             );
                         }
                     }
-                    Err(_) => display.print_wrapped("No save files found.", Color::Red),
+                    Err(e) => display.print_wrapped(&format!("{}", e), Color::Red),
                 }
             }
             "3" => {
@@ -242,10 +254,11 @@ async fn change_settings(settings: &mut Settings, display: &Display) -> Result<(
         );
         display.print_wrapped("2. Change OpenAI API Key", Color::White);
         display.print_wrapped(
-            &format!(
-                "3. Audio input and Output. Enabled: {}",
-                settings.audio_output_enabled
-            ),
+            &format!("3. Audio Output Enabled: {}", settings.audio_output_enabled),
+            Color::White,
+        );
+        display.print_wrapped(
+            &format!("4. Audio input Enabled: {}", settings.audio_input_enabled),
             Color::White,
         );
         display.print_wrapped("0. Back to Main Menu", Color::White);
@@ -272,6 +285,20 @@ async fn change_settings(settings: &mut Settings, display: &Display) -> Result<(
                     &format!(
                         "Audio Output is now {}.",
                         if settings.audio_output_enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    ),
+                    Color::Green,
+                );
+            }
+            "4" => {
+                settings.audio_input_enabled = !settings.audio_input_enabled;
+                display.print_wrapped(
+                    &format!(
+                        "Audio Output is now {}.",
+                        if settings.audio_input_enabled {
                             "enabled"
                         } else {
                             "disabled"

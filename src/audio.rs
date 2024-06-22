@@ -73,6 +73,10 @@ pub async fn generate_and_play_audio(
 }
 
 pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Box<dyn Error>> {
+    let settings = crate::settings::load_settings().unwrap_or_default();
+    if !settings.audio_input_enabled {
+        return Ok(String::new());
+    }
     let recording_path = format!(
         "./data/logs/recording_{}.wav",
         chrono::Utc::now().format("%Y%m%d%H%M%S")
@@ -199,14 +203,14 @@ fn record_audio(file_path: &str, display: &Display) -> Result<String, Box<dyn st
                     _ => {}
                 }
             }
-        } else if is_recording.load(Ordering::Relaxed) {
-            if last_activity.elapsed() > Duration::from_millis(300) {
-                if let Some(start) = recording_start {
-                    let duration = start.elapsed();
-                    if duration >= minimum_duration {
-                        is_recording.store(false, Ordering::Relaxed);
-                        break;
-                    }
+        } else if is_recording.load(Ordering::Relaxed)
+            && last_activity.elapsed() > Duration::from_millis(300)
+        {
+            if let Some(start) = recording_start {
+                let duration = start.elapsed();
+                if duration >= minimum_duration {
+                    is_recording.store(false, Ordering::Relaxed);
+                    break;
                 }
             }
         }

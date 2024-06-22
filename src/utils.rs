@@ -1,17 +1,10 @@
+use crate::display::Display;
+use crate::Color;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::error::Error;
-use std::io::{self, Write};
 
-pub fn get_user_input(prompt: &str) -> String {
-    print!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
-}
-
-pub fn correct_input(initial_input: &str) -> Result<String, Box<dyn Error>> {
+pub fn correct_input(display: &Display, initial_input: &str) -> Result<String, Box<dyn Error>> {
     let mut rl = DefaultEditor::new()?;
 
     // Read the line with the initial input
@@ -23,15 +16,15 @@ pub fn correct_input(initial_input: &str) -> Result<String, Box<dyn Error>> {
             Ok(line)
         }
         Err(ReadlineError::Interrupted) => {
-            println!("CTRL-C");
+            display.print_wrapped("Input interrupted. Input 'exit' to exit.", Color::Red);
             Ok(String::new())
         }
         Err(ReadlineError::Eof) => {
-            println!("CTRL-D");
+            display.print_wrapped("End of input (Ctrl-D).", Color::Red);
             Ok(String::new())
         }
         Err(err) => {
-            println!("Error: {:?}", err);
+            display.print_wrapped(&format!("Error: {:?}", err), Color::Red);
             Err(Box::new(err))
         }
     }
