@@ -312,7 +312,7 @@ async fn main_conversation_loop(
             break;
         }
 
-        log_and_display_message(log_file, &user_input, "User input", display)?;
+        log_and_display_message(log_file, &user_input, "You", display)?;
 
         display.print_debug("Debug: Sending user message", Color::Magenta);
         send_user_message(client, &thread_id, &user_input).await?;
@@ -432,7 +432,7 @@ async fn main_conversation_loop(
 
         display.print_debug("Debug: Getting latest message", Color::Magenta);
         let response_text = get_latest_message(client, &thread_id).await?;
-        log_and_display_message(log_file, &response_text, "Assistant's response", display)?;
+        log_and_display_message(log_file, &response_text, "Game Master", display)?;
         generate_and_play_audio(audio, &response_text, "narrator").await?;
     }
 
@@ -596,7 +596,11 @@ fn log_and_display_message(
 ) -> Result<(), SharadError> {
     writeln!(log_file, "{}: {}", prefix, message)?;
     display.print_separator(Color::Cyan);
-    display.print_wrapped(message, Color::Green);
+    if prefix == "Game Master" {
+        display.print_wrapped(message, Color::Green);
+    } else {
+        display.print_wrapped(message, Color::Blue);
+    }
     display.print_separator(Color::Cyan);
     Ok(())
 }
