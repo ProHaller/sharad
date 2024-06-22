@@ -1,17 +1,27 @@
 use crate::display::Display;
 use crate::error::SharadError;
 use crate::Color;
+use async_openai::Client;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 
 const SETTINGS_FILE: &str = "./data/logs/settings.json";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
     pub language: String,
     pub openai_api_key: String,
+    #[serde(default = "default_true")]
     pub audio_output_enabled: bool,
+    #[serde(default = "default_true")]
     pub audio_input_enabled: bool,
+    #[serde(default)]
+    pub debug_mode: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -21,75 +31,163 @@ impl Default for Settings {
             openai_api_key: String::new(),
             audio_output_enabled: true,
             audio_input_enabled: true,
+            debug_mode: false,
         }
     }
 }
 
 pub fn load_settings() -> Result<Settings, SharadError> {
-    if let Ok(metadata) = fs::metadata(SETTINGS_FILE) {
-        if metadata.is_file() {
-            let data = fs::read_to_string(SETTINGS_FILE)?;
-            let settings: Settings = serde_json::from_str(&data)?;
-            return Ok(settings);
-        }
-    }
-    Ok(Settings::default())
-}
+    match fs::read_to_string(SETTINGS_FILE) {
+        Ok(data) => {
+            let mut settings: Settings =
+                serde_json::from_str(&data).unwrap_or_else(|_| Settings::default());
 
-pub fn load_individual_setting<T>(key: &str) -> Result<T, SharadError>
-where
-    T: for<'de> Deserialize<'de> + Default,
-{
-    if let Ok(metadata) = fs::metadata(SETTINGS_FILE) {
-        if metadata.is_file() {
-            let data = fs::read_to_string(SETTINGS_FILE)?;
-            let settings: serde_json::Value = serde_json::from_str(&data)?;
-            if let Some(value) = settings.get(key) {
-                return serde_json::from_value(value.clone()).map_err(SharadError::SerdeJson);
+            // Check for empty required fields and set default values
+            if settings.language.trim().is_empty() {
+                settings.language = Settings::default().language;
             }
-        }
-    }
-    Ok(T::default())
-}
-
-pub fn validate_setting<T>(value: &T, default: &T) -> Result<(), SharadError>
-where
-    T: PartialEq + Default,
-{
-    if value == default {
-        Err(SharadError::Other("Invalid setting".to_string()))
-    } else {
-        Ok(())
-    }
-}
-
-pub fn load_and_validate_setting<T>(key: &str, default: T, display: &Display) -> T
-where
-    T: for<'de> Deserialize<'de> + Default + PartialEq,
-{
-    match load_individual_setting::<T>(key) {
-        Ok(value) => {
-            if validate_setting(&value, &default).is_err() {
-                display.print_wrapped(
-                    &format!("Invalid {} setting. Resetting to default.", key),
-                    Color::Red,
-                );
-                default
-            } else {
-                value
+            if settings.openai_api_key.trim().is_empty() {
+                settings.openai_api_key = Settings::default().openai_api_key;
             }
+
+            Ok(settings)
         }
-        Err(e) => {
-            display.print_wrapped(
-                &format!("Failed to load {} setting: {}", key, e),
-                Color::Red,
-            );
-            default
-        }
+        Err(_) => Ok(Settings::default()),
     }
 }
+
 pub fn save_settings(settings: &Settings) -> Result<(), SharadError> {
     let json = serde_json::to_string_pretty(settings)?;
     fs::write(SETTINGS_FILE, json)?;
     Ok(())
+}
+
+pub async fn validate_settings(
+    settings: &mut Settings,
+    display: &Display,
+) -> Result<(), SharadError> {
+    // Validate OpenAI API Key
+    while !is_valid_key(&settings.openai_api_key).await {
+        display.print_wrapped("Invalid or empty API Key", Color::Red);
+        settings.openai_api_key = display.get_user_input("Enter your OpenAI API Key:");
+    }
+    display.print_wrapped("API Key is valid.", Color::Green);
+
+    // Ensure language is not empty
+    if settings.language.trim().is_empty() {
+        settings.language = Settings::default().language;
+        display.print_wrapped(
+            &format!("Language was empty. Set to default: {}", settings.language),
+            Color::Yellow,
+        );
+    }
+
+    save_settings(settings)?;
+    Ok(())
+}
+
+async fn is_valid_key(api_key: &str) -> bool {
+    if api_key.is_empty() {
+        return false;
+    }
+    env::set_var("OPENAI_API_KEY", api_key);
+    let client = Client::new();
+    client.models().list().await.is_ok()
+}
+
+pub async fn change_settings(
+    settings: &mut Settings,
+    display: &Display,
+) -> Result<(), SharadError> {
+    loop {
+        display.print_separator(Color::Blue);
+        display.print_centered("Settings Menu", Color::Green);
+        display.print_wrapped(
+            &format!("1. Change Language. Current: {}", settings.language),
+            Color::White,
+        );
+        display.print_wrapped("2. Change OpenAI API Key", Color::White);
+        display.print_wrapped(
+            &format!("3. Audio Output Enabled: {}", settings.audio_output_enabled),
+            Color::White,
+        );
+        display.print_wrapped(
+            &format!("4. Audio Input Enabled: {}", settings.audio_input_enabled),
+            Color::White,
+        );
+        display.print_wrapped(
+            &format!("5. Debug Mode: {}", settings.debug_mode),
+            Color::White,
+        );
+        display.print_wrapped("0. Back to Main Menu", Color::White);
+
+        let choice = display.get_user_input("Enter your choice:");
+
+        match choice.trim() {
+            "1" => {
+                let new_language =
+                    display.get_user_input("Enter the language you want to play in:");
+                if !new_language.trim().is_empty() {
+                    settings.language = new_language;
+                    display.print_wrapped(
+                        &format!("Language changed to {}.", settings.language),
+                        Color::Green,
+                    );
+                } else {
+                    display
+                        .print_wrapped("Language cannot be empty. Please try again.", Color::Red);
+                }
+            }
+            "2" => {
+                settings.openai_api_key.clear();
+                validate_settings(settings, display).await?;
+            }
+            "3" => {
+                settings.audio_output_enabled = !settings.audio_output_enabled;
+                display.print_wrapped(
+                    &format!(
+                        "Audio Output is now {}.",
+                        if settings.audio_output_enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    ),
+                    Color::Green,
+                );
+            }
+            "4" => {
+                settings.audio_input_enabled = !settings.audio_input_enabled;
+                display.print_wrapped(
+                    &format!(
+                        "Audio Input is now {}.",
+                        if settings.audio_input_enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    ),
+                    Color::Green,
+                );
+            }
+            "5" => {
+                settings.debug_mode = !settings.debug_mode;
+                display.print_wrapped(
+                    &format!(
+                        "Debug Mode is now {}.",
+                        if settings.debug_mode {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                    ),
+                    Color::Green,
+                );
+            }
+            "0" => return Ok(()),
+            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
+        }
+
+        save_settings(settings)?;
+    }
 }

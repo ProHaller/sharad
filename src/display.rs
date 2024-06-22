@@ -1,8 +1,10 @@
+use crate::settings::load_settings;
 use colored::*;
 use std::io::{self, Write};
 use textwrap::{fill, wrap};
 use unicode_width::UnicodeWidthStr;
 
+#[derive(Clone)]
 pub struct Display {
     term_width: usize,
 }
@@ -66,5 +68,14 @@ impl Display {
 
     pub fn clear_thinking(&self) {
         println!();
+    }
+
+    pub fn print_debug(&self, text: &str, color: Color) {
+        let settings = load_settings();
+        if let Ok(debug) = settings {
+            if debug.debug_mode {
+                self.print_wrapped(text, color);
+            }
+        }
     }
 }

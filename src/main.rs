@@ -7,13 +7,12 @@ mod settings;
 mod utils;
 
 use crate::assistant::{load_conversation_from_file, run_conversation, run_conversation_with_save};
-use crate::settings::{load_and_validate_setting, save_settings, Settings};
-use async_openai::Client;
+use crate::display::Display;
+use crate::error::SharadError;
+use crate::settings::{change_settings, load_settings, validate_settings};
 use chrono::Local;
 use colored::*;
 use core::cmp::Ordering;
-use display::Display;
-use error::SharadError;
 use self_update::backends::github::{ReleaseList, Update};
 use semver::Version;
 use std::env;
@@ -66,12 +65,6 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     Ok(())
-}
-
-async fn is_valid_key(api_key: &str) -> bool {
-    env::set_var("OPENAI_API_KEY", api_key);
-    let client = Client::new();
-    client.models().list().await.is_ok()
 }
 
 #[tokio::main]
@@ -138,26 +131,8 @@ async fn main() -> Result<(), SharadError> {
 
     writeln!(log_file, "Sharad game started.")?;
 
-    let mut settings = Settings {
-        language: load_and_validate_setting("language", Settings::default().language, &display),
-        openai_api_key: load_and_validate_setting(
-            "openai_api_key",
-            Settings::default().openai_api_key,
-            &display,
-        ),
-        audio_output_enabled: load_and_validate_setting(
-            "audio_output_enabled",
-            Settings::default().audio_output_enabled,
-            &display,
-        ),
-        audio_input_enabled: load_and_validate_setting(
-            "audio_input_enabled",
-            Settings::default().audio_input_enabled,
-            &display,
-        ),
-    };
-
-    validate_openai_key(&mut settings, &display).await?;
+    let mut settings = load_settings()?;
+    validate_settings(&mut settings, &display).await?;
 
     loop {
         display.print_separator(Color::Blue);
@@ -221,96 +196,4 @@ async fn main() -> Result<(), SharadError> {
 
     display.print_footer("Thank you for playing Sharad!");
     Ok(())
-}
-
-async fn validate_openai_key(
-    settings: &mut Settings,
-    display: &Display,
-) -> Result<(), SharadError> {
-    while settings.openai_api_key.is_empty() || !is_valid_key(&settings.openai_api_key).await {
-        display.print_wrapped("Invalid API Key", Color::Red);
-        let api_key = display.get_user_input("Enter your OpenAI API Key:");
-        settings.openai_api_key = api_key;
-
-        if is_valid_key(&settings.openai_api_key).await {
-            save_settings(settings)?;
-            break;
-        } else {
-            display.print_wrapped("Invalid API Key", Color::Red);
-            settings.openai_api_key.clear();
-        }
-    }
-    display.print_wrapped("API Key is valid.", Color::Green);
-    Ok(())
-}
-
-async fn change_settings(settings: &mut Settings, display: &Display) -> Result<(), SharadError> {
-    loop {
-        display.print_separator(Color::Blue);
-        display.print_centered("Settings Menu", Color::Green);
-        display.print_wrapped(
-            &format!("1. Change Language. Current: {}", settings.language),
-            Color::White,
-        );
-        display.print_wrapped("2. Change OpenAI API Key", Color::White);
-        display.print_wrapped(
-            &format!("3. Audio Output Enabled: {}", settings.audio_output_enabled),
-            Color::White,
-        );
-        display.print_wrapped(
-            &format!("4. Audio input Enabled: {}", settings.audio_input_enabled),
-            Color::White,
-        );
-        display.print_wrapped("0. Back to Main Menu", Color::White);
-
-        let choice = display.get_user_input("Enter your choice:");
-
-        match choice.trim() {
-            "1" => {
-                let new_language =
-                    display.get_user_input("Enter the language you want to play in:");
-                settings.language = new_language;
-                display.print_wrapped(
-                    &format!("Language changed to {}.", settings.language),
-                    Color::Green,
-                );
-            }
-            "2" => {
-                settings.openai_api_key.clear();
-                validate_openai_key(settings, display).await?;
-            }
-            "3" => {
-                settings.audio_output_enabled = !settings.audio_output_enabled;
-                display.print_wrapped(
-                    &format!(
-                        "Audio Output is now {}.",
-                        if settings.audio_output_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    ),
-                    Color::Green,
-                );
-            }
-            "4" => {
-                settings.audio_input_enabled = !settings.audio_input_enabled;
-                display.print_wrapped(
-                    &format!(
-                        "Audio Output is now {}.",
-                        if settings.audio_input_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    ),
-                    Color::Green,
-                );
-            }
-            "0" => return Ok(()),
-            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
-        }
-
-        save_settings(settings)?;
-    }
 }
