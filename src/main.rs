@@ -109,10 +109,7 @@ async fn main() -> Result<(), SharadError> {
         &format!("Welcome to Sharad v{}", env!("CARGO_PKG_VERSION")),
         Color::Cyan,
     );
-    display.print_centered(
-        "You can quit at any time by saying \"exit\".",
-        Color::Yellow,
-    );
+    display.print_centered("You can quit by inputing \"exit\".", Color::Yellow);
 
     fs::create_dir_all("./data/logs")?;
     let log_file_path = format!(
