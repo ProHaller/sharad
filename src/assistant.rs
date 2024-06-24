@@ -1,10 +1,10 @@
-use crate::audio::{generate_and_play_audio, record_and_transcribe_audio};
 use crate::display::Display;
 use crate::error::SharadError;
 use crate::image::{generate_character_image, Appearance, CharacterInfo};
 use crate::settings::load_settings;
 use crate::utils::correct_input;
 
+use crate::audio::{generate_and_play_audio, record_and_transcribe_audio};
 use async_openai::{
     config::OpenAIConfig,
     types::{
@@ -16,12 +16,16 @@ use async_openai::{
     Audio, Client,
 };
 use colored::*;
+use crossterm::{
+    cursor, execute,
+    terminal::{Clear, ClearType},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::future::Future;
-use std::io::Write;
+use std::io::{stdout, Write};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -59,7 +63,22 @@ pub fn save_conversation(
     Ok(())
 }
 
-pub fn load_conversation_from_file(display: &Display) -> Result<Save, SharadError> {
+pub fn load_conversation_from_file(display: &Display, art: &str) -> Result<Save, SharadError> {
+    fn draw_header(display: &Display, art: &str) -> Result<(), SharadError> {
+        execute!(stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))?;
+        display.print_centered(art, Color::Green);
+        display.print_centered(
+            &format!("Welcome to Sharad v{}", env!("CARGO_PKG_VERSION")),
+            Color::Cyan,
+        );
+        display.print_centered("You can quit by inputing \"exit\".", Color::Yellow);
+        display.print_separator(Color::Blue);
+        Ok(())
+    }
+
+    draw_header(display, art)?;
+    display.print_wrapped("Loading a game.", Color::Green);
+
     let save_dir = Path::new(SAVE_DIR);
 
     // Check if the save directory exists
@@ -101,7 +120,17 @@ pub fn load_conversation_from_file(display: &Display) -> Result<Save, SharadErro
         match input.trim().parse::<usize>() {
             Ok(num) if num > 0 && num <= save_files.len() => break num,
             Ok(0) => return Err(SharadError::Message("Back to main menu.".into())),
-            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
+            _ => {
+                display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red);
+                // Redraw the header and menu after an invalid choice
+                draw_header(display, art)?;
+                display.print_wrapped("Loading a game.", Color::Green);
+                display.print_wrapped("Input '0' to go back to main menu.", Color::Yellow);
+                display.print_wrapped("Available save files:", Color::Yellow);
+                for (index, save_file) in save_files.iter().enumerate() {
+                    display.print_wrapped(&format!("{}. {}", index + 1, save_file), Color::White);
+                }
+            }
         }
     };
 
@@ -149,6 +178,7 @@ pub async fn run_conversation(
     log_file: &mut File,
     is_new_game: bool,
     display: &Display,
+    art: &str,
 ) -> Result<(), SharadError> {
     let client = Client::new();
     let language = load_settings()?.language;
@@ -184,7 +214,7 @@ pub async fn run_conversation(
         save_conversation(&assistant_id, &thread.id, display)?;
         (assistant_id, thread.id)
     } else {
-        let save = load_conversation_from_file(display)?;
+        let save = load_conversation_from_file(display, art)?;
         (save.assistant_id, save.thread_id)
     };
 

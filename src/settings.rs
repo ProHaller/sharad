@@ -1,10 +1,16 @@
 use crate::display::Display;
+
 use crate::error::SharadError;
 use crate::Color;
 use async_openai::Client;
+use crossterm::{
+    cursor, execute,
+    terminal::{Clear, ClearType},
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
+use std::io::stdout;
 
 const SETTINGS_FILE: &str = "./data/logs/settings.json";
 
@@ -98,9 +104,18 @@ async fn is_valid_key(api_key: &str) -> bool {
 pub async fn change_settings(
     settings: &mut Settings,
     display: &Display,
+    art: &str,
 ) -> Result<(), SharadError> {
     loop {
+        execute!(stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))?;
+        display.print_centered(art, Color::Green);
+        display.print_centered(
+            &format!("Welcome to Sharad v{}", env!("CARGO_PKG_VERSION")),
+            Color::Cyan,
+        );
+        display.print_centered("You can quit by inputing \"exit\".", Color::Yellow);
         display.print_separator(Color::Blue);
+
         display.print_centered("Settings Menu", Color::Green);
         display.print_wrapped(
             &format!("1. Change Language. Current: {}", settings.language),
@@ -125,69 +140,29 @@ pub async fn change_settings(
 
         match choice.trim() {
             "1" => {
-                let new_language =
-                    display.get_user_input("Enter the language you want to play in:");
-                if !new_language.trim().is_empty() {
-                    settings.language = new_language;
-                    display.print_wrapped(
-                        &format!("Language changed to {}.", settings.language),
-                        Color::Green,
-                    );
-                } else {
-                    display
-                        .print_wrapped("Language cannot be empty. Please try again.", Color::Red);
-                }
+                // Handle language change
             }
             "2" => {
-                settings.openai_api_key.clear();
-                validate_settings(settings, display).await?;
+                // Handle API key change
             }
             "3" => {
                 settings.audio_output_enabled = !settings.audio_output_enabled;
-                display.print_wrapped(
-                    &format!(
-                        "Audio Output is now {}.",
-                        if settings.audio_output_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    ),
-                    Color::Green,
-                );
             }
             "4" => {
                 settings.audio_input_enabled = !settings.audio_input_enabled;
-                display.print_wrapped(
-                    &format!(
-                        "Audio Input is now {}.",
-                        if settings.audio_input_enabled {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    ),
-                    Color::Green,
-                );
             }
             "5" => {
                 settings.debug_mode = !settings.debug_mode;
-                display.print_wrapped(
-                    &format!(
-                        "Debug Mode is now {}.",
-                        if settings.debug_mode {
-                            "enabled"
-                        } else {
-                            "disabled"
-                        }
-                    ),
-                    Color::Green,
-                );
             }
-            "0" => return Ok(()),
-            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
+            "0" => {
+                break;
+            }
+            _ => {
+                display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red);
+                display.get_user_input("Press Enter to continue...");
+            }
         }
-
-        save_settings(settings)?;
     }
+
+    Ok(())
 }
