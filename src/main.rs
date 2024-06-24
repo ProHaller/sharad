@@ -154,19 +154,23 @@ async fn main() -> Result<(), SharadError> {
                 display.print_wrapped("Loading a game.", Color::Green);
                 match load_conversation_from_file(&display) {
                     Ok(save) => {
-                        if let Err(e) = run_conversation_with_save(
+                        match run_conversation_with_save(
                             &mut log_file,
-                            save.assistant_id,
-                            save.thread_id,
+                            &save.assistant_id,
+                            &save.thread_id,
                             false,
                             &display,
                         )
                         .await
                         {
-                            display.print_wrapped(
+                            Ok(json_response) => display.print_wrapped(
+                                &serde_json::to_string_pretty(&json_response)?,
+                                Color::Green,
+                            ),
+                            Err(e) => display.print_wrapped(
                                 &format!("Failed to run conversation: {}", e),
                                 Color::Red,
-                            );
+                            ),
                         }
                     }
                     Err(e) => display.print_wrapped(&format!("{}", e), Color::Red),

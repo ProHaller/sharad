@@ -18,6 +18,7 @@ use async_openai::{
 use colored::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use serde_json::Value;
 use std::fs::{self, File};
 use std::future::Future;
 use std::io::Write;
@@ -168,7 +169,7 @@ pub async fn run_conversation(
         // For a new game, send an initial message
         let initial_message = CreateMessageRequestArgs::default()
             .role(MessageRole::User)
-            .content(format!("Begin by welcoming the player to the world and asking them to describe their character, including name, background, and motivations. Remember that the player is a beginner in this world until they accrued lots of experience. Always write in the following language: {}", language))
+            .content(format!("You are the Game Master of a Role Playing Game. Start by welcoming the player to the game world and ask them to describe their character. The description should include the character's name, background, and motivations. Note that the player is considered a beginner in this world until they have gained significant experience. Write your response in valid JSON within a \"narration\" tag. Always write in the following language: {}", language))
             .build()?;
         display.print_debug(
             &format!("Debug: Initial message: {:?}", initial_message.content),
@@ -187,21 +188,31 @@ pub async fn run_conversation(
         (save.assistant_id, save.thread_id)
     };
 
-    run_conversation_with_save(log_file, assistant_id, thread_id, is_new_game, display).await
+    let response =
+        run_conversation_with_save(log_file, &assistant_id, &thread_id, is_new_game, display)
+            .await?;
+    let json_response = json!({
+        "assistant_id": assistant_id,
+        "thread_id": thread_id,
+        "response": response,
+    });
+
+    display.print_wrapped(&serde_json::to_string_pretty(&json_response)?, Color::Green);
+    Ok(())
 }
 
 pub async fn run_conversation_with_save(
     log_file: &mut File,
-    assistant_id: String,
-    thread_id: String,
+    assistant_id: &str,
+    thread_id: &str,
     is_new_game: bool,
     display: &Display,
-) -> Result<(), SharadError> {
+) -> Result<Value, SharadError> {
     let client = Client::new();
     let audio = Audio::new(&client);
 
     let _request = CreateRunRequestArgs::default()
-    .assistant_id(&assistant_id)
+    .assistant_id(assistant_id)
     .tools(vec![AssistantTools::Function(AssistantToolsFunction {
         function: FunctionObject {
             name: "generate_character_image".to_string(),
@@ -285,17 +296,9 @@ pub async fn run_conversation_with_save(
     .build()?;
 
     if is_new_game {
-        handle_new_game(
-            &client,
-            &thread_id,
-            &assistant_id,
-            log_file,
-            display,
-            &audio,
-        )
-        .await?;
+        handle_new_game(&client, thread_id, assistant_id, log_file, display, &audio).await?;
     } else {
-        display_previous_conversation(&client, &thread_id, display).await?;
+        display_previous_conversation(&client, thread_id, display).await?;
     }
 
     main_conversation_loop(&client, thread_id, assistant_id, log_file, display, &audio).await?;
@@ -303,7 +306,15 @@ pub async fn run_conversation_with_save(
     display.print_footer("Thank you for playing!");
     writeln!(log_file, "Conversation ended.")?;
     log_file.sync_all()?;
-    Ok(())
+
+    // Serialize the final state to JSON
+    let final_state = json!({
+        "status": "Conversation ended",
+        "assistant_id": assistant_id,
+        "thread_id": thread_id,
+    });
+
+    Ok(final_state)
 }
 
 async fn handle_new_game(
@@ -361,8 +372,8 @@ async fn display_previous_conversation(
 
 async fn main_conversation_loop(
     client: &Client<OpenAIConfig>,
-    thread_id: String,
-    assistant_id: String,
+    thread_id: &str,
+    assistant_id: &str,
     log_file: &mut File,
     display: &Display,
     audio: &Audio<'_, OpenAIConfig>,
@@ -376,26 +387,27 @@ async fn main_conversation_loop(
             break;
         }
 
-        log_and_display_message(log_file, &user_input, "You", display)?;
-        let instructions = r#"When appropriate, evaluate the probability of success of the intended player action. If it falls outside their skills and capabilities, make them fail and face all the consequences of their actions, up to and including death. 
-Allow the player to try an action at each step of the game but do not provide choices for them.
-Do not allow the player to summon anything that was not introduced previously, execept if perfectly inocuous.
-If the player requested action involves multiple steps or failure points, force the player to chose a course of action at each step.
-Write your reasoning in a code block between "```" and then narrate the results in plain text without headers and one action at a time before letting the player choose.
-Player action:"#;
-        let user_prompt = format!("{} \"{}\"", instructions, user_input);
+        // Create the JSON structure
+        let message_json = serde_json::json!({
+            "instructions": "Act as a professional Game Master in a role-playing game. Evaluate the probability of success for each intended player action. If an action falls outside the player's skills and capabilities, make them fail and face the consequences, which could include death. Allow the player to attempt one action at a time without providing choices. Do not allow the player to summon anything that was not previously introduced unless it is perfectly innocuous. For actions involving multiple steps or failure points, require the player to choose a course of action at each step. Write your reasoning in a JSON \"reasoning\" tag and narrate the results in a JSON \"narration\" tag. Present one action at a time before prompting the player for their next action.",
+            "player_action": user_input
+        });
+
+        // Convert the JSON to a string
+        let user_prompt = serde_json::to_string(&message_json)?;
 
         display.print_debug(
             &format!("Debug: Sending user message:{}", user_prompt),
             Color::Magenta,
         );
-        send_user_message(client, &thread_id, &user_prompt).await?;
+        display.print_wrapped(&user_input, Color::Blue);
+        send_user_message(client, thread_id, &user_prompt).await?;
 
         // Ensure there is no active run before creating a new one
         loop {
             let runs = client
                 .threads()
-                .runs(&thread_id)
+                .runs(thread_id)
                 .list(&[("limit", "1")])
                 .await?;
             if runs.data.is_empty() || runs.data[0].status == RunStatus::Completed {
@@ -406,7 +418,7 @@ Player action:"#;
         }
 
         display.print_debug("Debug: Creating and waiting for run", Color::Magenta);
-        let run = create_and_wait_for_run(client, &thread_id, &assistant_id, display).await?;
+        let run = create_and_wait_for_run(client, thread_id, assistant_id, display).await?;
 
         display.print_debug("Debug: Checking for required actions", Color::Magenta);
         // Handle tool calls
@@ -520,7 +532,7 @@ Player action:"#;
                         };
                         client
                             .threads()
-                            .runs(&thread_id)
+                            .runs(thread_id)
                             .submit_tool_outputs(&run.id, dummy_submit_request)
                             .await?;
                     }
@@ -530,7 +542,7 @@ Player action:"#;
 
         // Wait for the run to complete after submitting tool outputs
         loop {
-            let run_status = client.threads().runs(&thread_id).retrieve(&run.id).await?;
+            let run_status = client.threads().runs(thread_id).retrieve(&run.id).await?;
             display.print_debug(
                 &format!("Debug: Current run status: {:?}", run_status.status),
                 Color::Magenta,
@@ -557,10 +569,14 @@ Player action:"#;
         }
 
         display.print_debug("Debug: Getting latest message", Color::Magenta);
-        let response_text = get_latest_message(client, &thread_id).await?;
-        let (strip_response, _block) = separate_block(&response_text);
+        let response_text = get_latest_message(client, thread_id).await?;
         log_and_display_message(log_file, &response_text, "Game Master", display)?;
-        generate_and_play_audio(audio, &strip_response, "narrator").await?;
+
+        // Parse the JSON response to extract the narration for audio
+        let json_response: Value = serde_json::from_str(&response_text)?;
+        if let Some(narration) = json_response.get("Narration") {
+            generate_and_play_audio(audio, narration.as_str().unwrap_or(""), "narrator").await?;
+        }
     }
 
     Ok(())
@@ -586,8 +602,17 @@ async fn create_and_wait_for_run(
 
     display.print_thinking();
     let mut iterations = 0;
+    let max_iterations = 100; // Set a reasonable maximum number of iterations
+
     loop {
         iterations += 1;
+        if iterations > max_iterations {
+            display.clear_thinking();
+            return Err(SharadError::Other(
+                "Run exceeded maximum iterations".to_string(),
+            ));
+        }
+
         display.print_debug(
             &format!("Debug: Checking run status (iteration {})", iterations),
             Color::Magenta,
@@ -653,31 +678,42 @@ fn display_message(message: &MessageObject, display: &Display) {
     };
     display.print_separator(Color::Cyan);
     display.print_wrapped(&format!("{}: ", role), Color::Yellow);
+
     if let Some(MessageContent::Text(text_content)) = message.content.first() {
         let text = &text_content.text.value;
-        if let Some(block_start) = text.find("```") {
-            if let Some(block_end) = text[block_start + 3..].find("```") {
-                let block_end = block_end + block_start + 3;
-                let block = &text[block_start + 3..block_end];
-                let remaining_text = format!("{}{}", &text[..block_start], &text[block_end + 3..]);
-                display.print_debug(block, Color::Magenta);
-                display.print_wrapped(
-                    &remaining_text,
-                    if role == "Game Master" {
-                        Color::Green
-                    } else {
-                        Color::Blue
-                    },
-                );
-            } else {
-                display.print_wrapped(
-                    text,
-                    if role == "Game Master" {
-                        Color::Green
-                    } else {
-                        Color::Blue
-                    },
-                );
+        match message.role {
+            MessageRole::User => {
+                if let Ok(json) = serde_json::from_str::<Value>(text) {
+                    if let Some(instructions) = json.get("instructions") {
+                        display.print_debug(
+                            &format!("instructions: {}", instructions),
+                            Color::Magenta,
+                        );
+                    }
+                    if let Some(player_action) = json.get("player_action") {
+                        display.print_debug(&format!("{}", player_action), Color::Blue);
+                    }
+                }
+            }
+            MessageRole::Assistant => {
+                // Try to parse the text as JSON
+                if let Ok(json) = serde_json::from_str::<Value>(text) {
+                    if let Some(reasoning) = json.get("reasoning") {
+                        display.print_debug(&format!("Reasoning: {}", reasoning), Color::Magenta);
+                    }
+                    // Display instructions and Game Master Reasoning as debug
+                    if let Some(narration) = json.get("narration") {
+                        display.print_debug(&format!("{}", narration), Color::Green);
+                    }
+
+                    // Display Narration in green
+                    if let Some(narration) = json.get("Narration") {
+                        display.print_wrapped(narration.as_str().unwrap_or(""), Color::Green);
+                    }
+                } else {
+                    // If it's not valid JSON, just display the text as before
+                    display.print_wrapped(text, Color::Green);
+                }
             }
         }
     }
@@ -736,41 +772,45 @@ async fn get_latest_message(
 fn log_and_display_message(
     log_file: &mut File,
     message: &str,
-    prefix: &str,
+    sender: &str,
     display: &Display,
 ) -> Result<(), SharadError> {
-    writeln!(log_file, "{}: {}", prefix, message)?;
-    display.print_separator(Color::Cyan);
-    if let Some(block_start) = message.find("```") {
-        if let Some(block_end) = message[block_start + 3..].find("```") {
-            let block_end = block_end + block_start + 3;
-            let block = &message[block_start + 3..block_end];
-            let remaining_text =
-                format!("{}{}", &message[..block_start], &message[block_end + 3..]);
-            display.print_debug(block, Color::Magenta);
-            if prefix == "Game Master" {
-                display.print_wrapped(&remaining_text, Color::Green);
-            } else {
-                display.print_wrapped(&remaining_text, Color::Blue);
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let log_entry = format!("[{}] {}: {}\n", timestamp, sender, message);
+    log_file.write_all(log_entry.as_bytes())?;
+    // Parse the JSON message
+    let json: Value = serde_json::from_str(message)?;
+
+    match sender {
+        "You" => {
+            if let Some(instructions) = json.get("instructions") {
+                display.print_debug(&format!("Instructions: {}", instructions), Color::Magenta);
+            }
+            if let Some(player_action) = json.get("player_action") {
+                display.print_debug(&format!("{}", player_action), Color::Blue);
             }
         }
-    } else if prefix == "Game Master" {
-        display.print_wrapped(message, Color::Green);
-    } else {
-        display.print_wrapped(message, Color::Blue);
-    }
-    display.print_separator(Color::Cyan);
-    Ok(())
-}
 
-fn separate_block(text: &str) -> (String, String) {
-    if let Some(block_start) = text.find("```") {
-        if let Some(block_end) = text[block_start + 3..].find("```") {
-            let block_end = block_end + block_start + 3;
-            let block = &text[block_start + 3..block_end];
-            let remaining_text = format!("{}{}", &text[..block_start], &text[block_end + 3..]);
-            return (remaining_text, block.to_string());
+        "Game Master" => {
+            // Display instructions and Game Master Reasoning as debug
+            if let Some(reasoning) = json.get("reasoning") {
+                display.print_debug(&format!("reasoning: {}", reasoning), Color::Magenta);
+            }
+            if let Some(narration) = json.get("narration") {
+                display.print_wrapped(&format!("{}", narration), Color::Green);
+            }
+
+            // Display Narration in green
+            if let Some(narration) = json.get("Narration") {
+                display.print_wrapped(narration.as_str().unwrap_or(""), Color::Green);
+            }
+        }
+        _ => {
+            if let Some(narration) = json.get("narration") {
+                display.print_wrapped(narration.as_str().unwrap_or(""), Color::Green);
+            }
         }
     }
-    (text.to_string(), (String::new()))
+
+    Ok(())
 }

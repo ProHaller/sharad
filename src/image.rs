@@ -1,4 +1,5 @@
 use crate::display::Display;
+use crate::error::SharadError;
 use crate::Color;
 use async_openai::{
     types::{CreateImageRequestArgs, ImageModel, ImageSize, ResponseFormat},
@@ -7,7 +8,7 @@ use async_openai::{
 use std::error::Error;
 use tokio::time::{timeout, Duration};
 
-pub async fn generate_and_save_image(prompt: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn generate_and_save_image(prompt: &str) -> Result<(), SharadError> {
     let client = Client::new();
     let display = Display::new();
 
@@ -18,22 +19,22 @@ pub async fn generate_and_save_image(prompt: &str) -> Result<(), Box<dyn Error +
         .response_format(ResponseFormat::Url)
         .size(ImageSize::S1024x1792)
         .user("async-openai")
-        .build()?;
+        .build()
+        .map_err(|e| SharadError::Other(e.to_string()))?;
 
     let response = match timeout(Duration::from_secs(120), client.images().create(request)).await {
-        Ok(res) => res?,
-        Err(_) => {
-            eprintln!("Error: The request timed out.");
-            return Err("Request timed out.".into());
-        }
+        Ok(res) => res.map_err(SharadError::OpenAI)?,
+        Err(_) => return Err(SharadError::Other("Request timed out.".into())),
     };
 
     if response.data.is_empty() {
-        eprintln!("Error: No image URLs received.");
-        return Err("No image URLs received.".into());
+        return Err(SharadError::Other("No image URLs received.".into()));
     }
 
-    let paths = response.save("./data/logs").await?;
+    let paths = response
+        .save("./data/logs")
+        .await
+        .map_err(SharadError::OpenAI)?;
 
     paths.iter().for_each(|path| {
         display.print_debug(
