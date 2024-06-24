@@ -381,7 +381,7 @@ async fn main_conversation_loop(
 Allow the player to try an action at each step of the game but do not provide choices for them.
 Do not allow the player to summon anything that was not introduced previously, execept if perfectly inocuous.
 If the player requested action involves multiple steps or failure points, force the player to chose a course of action at each step.
-Write the reasoning in a code block, and then Narrate the results without mentioning the game inner mecanics:
+Write your reasoning in a code block between "```" and then narrate the results in plain text without headers and one action at a time before letting the player choose.
 Player action:"#;
         let user_prompt = format!("{} \"{}\"", instructions, user_input);
 

@@ -79,7 +79,7 @@ pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Bo
         return Ok(String::new());
     }
     let recording_path = format!(
-        "./data/logs/recording_{}.wav",
+        "./data/logs/recording_{}.mp3",
         chrono::Utc::now().format("%Y%m%d%H%M%S")
     );
     record_audio(&recording_path, display)?;
