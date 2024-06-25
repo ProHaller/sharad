@@ -17,6 +17,7 @@ use crossterm::{
     cursor, execute,
     terminal::{Clear, ClearType},
 };
+use rand::Rng;
 use self_update::backends::github::{ReleaseList, Update};
 use semver::Version;
 use std::env;
@@ -61,14 +62,33 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
                     .build()?
                     .update()?;
             }
-            Ordering::Equal => println!("Current version is up to date."),
-            Ordering::Less => println!("You're in the future."),
+            Ordering::Equal => println!("{}", "Current version is up to date.".green()),
+            Ordering::Less => rainbow("You're in the future."),
         }
     } else {
         println!("No new updates found.");
     }
 
+    let display = Display::new();
+    display.get_user_input("press enter to continue...");
     Ok(())
+}
+
+fn rainbow(text: &str) {
+    let colors = [
+        Color::Red,
+        Color::Yellow,
+        Color::Green,
+        Color::Cyan,
+        Color::Blue,
+        Color::Magenta,
+    ];
+    let mut rng = rand::thread_rng();
+
+    for c in text.chars() {
+        let color = colors[rng.gen_range(0..colors.len())];
+        print!("{}", c.to_string().color(color).bold());
+    }
 }
 
 #[tokio::main]
