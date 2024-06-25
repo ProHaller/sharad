@@ -140,6 +140,18 @@ pub async fn change_settings(
 
         match choice.trim() {
             "1" => {
+                let new_language =
+                    display.get_user_input("Enter the language you want to play in:");
+                if !new_language.trim().is_empty() {
+                    settings.language = new_language;
+                    display.print_wrapped(
+                        &format!("Language changed to {}.", settings.language),
+                        Color::Green,
+                    );
+                } else {
+                    display
+                        .print_wrapped("Language cannot be empty. Please try again.", Color::Red);
+                }
                 // Handle language change
                 let new_language = display.get_user_input("Enter new language:");
                 if !new_language.trim().is_empty() {
@@ -154,6 +166,8 @@ pub async fn change_settings(
                 }
             }
             "2" => {
+                settings.openai_api_key.clear();
+                validate_settings(settings, display).await?;
                 // Handle API key change
                 let new_api_key = display.get_user_input("Enter new OpenAI API Key:");
                 if is_valid_key(&new_api_key).await {
