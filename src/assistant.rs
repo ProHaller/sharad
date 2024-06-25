@@ -227,7 +227,10 @@ pub async fn run_conversation(
         "response": response,
     });
 
-    display.print_wrapped(&serde_json::to_string_pretty(&json_response)?, Color::Green);
+    display.print_debug(
+        &serde_json::to_string_pretty(&json_response)?,
+        Color::Magenta,
+    );
     Ok(())
 }
 
