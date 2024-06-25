@@ -1,6 +1,6 @@
 [package]
 name = "sharad"
-version = "0.5.9"
+version = "0.6.0"
 authors = ["Roland Haller <haller.roland@gmail.com>"]
 edition = "2021"
 

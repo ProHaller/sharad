@@ -2,7 +2,7 @@ use crate::display::Display;
 use crate::error::SharadError;
 use crate::image::{generate_character_image, Appearance, CharacterInfo};
 use crate::settings::load_settings;
-use crate::utils::correct_input;
+use crate::utils::{correct_input, shadowrun_dice_roll};
 
 use crate::audio::{generate_and_play_audio, record_and_transcribe_audio};
 use async_openai::{
@@ -419,7 +419,7 @@ async fn main_conversation_loop(
 
         // Create the JSON structure
         let message_json = serde_json::json!({
-            "instructions": "Act as a professional Game Master in a role-playing game. Evaluate the probability of success for each intended player action. If an action falls outside the player's skills and capabilities, make them fail and face the consequences, which could include death. Allow the player to attempt one action at a time without providing choices. Do not allow the player to summon anything that was not previously introduced unless it is perfectly innocuous. For actions involving multiple steps or failure points, require the player to choose a course of action at each step. Write your reasoning in a JSON \"reasoning\" tag and narrate the results in a JSON \"narration\" tag. Present one action at a time before prompting the player for their next action.",
+            "instructions": "Act as a professional Game Master in a role-playing game. Evaluate the probability of success for each intended player action and roll the dice when pertinent. If an action falls outside the player's skills and capabilities, make them fail and face the consequences, which could include death. Allow the player to attempt one action at a time without providing choices. Do not allow the player to summon anything that was not previously introduced unless it is perfectly innocuous. For actions involving multiple steps or failure points, require the player to choose a course of action at each step. Write your reasoning and the results of the dice roll in a JSON \"reasoning\" tag and narrate the results in a JSON \"narration\" tag. Present one action at a time before prompting the player for their next action.",
             "player_action": user_input
         });
 
@@ -427,7 +427,7 @@ async fn main_conversation_loop(
         let user_prompt = serde_json::to_string(&message_json)?;
 
         display.print_debug(
-            &format!("Debug: Sending user message:{}", user_prompt),
+            &format!("Debug: Sending user message: {}", user_prompt),
             Color::Magenta,
         );
         display.print_wrapped(&user_input, Color::Blue);
@@ -463,6 +463,40 @@ async fn main_conversation_loop(
                         &format!("Debug: Processing tool call: {}", tool_call.function.name),
                         Color::Magenta,
                     );
+                    if tool_call.function.name == "roll_dice" {
+                        let args: serde_json::Value =
+                            serde_json::from_str(&tool_call.function.arguments)?;
+                        let dice_number = args["dice_number"].as_u64().unwrap_or(0) as u8;
+                        let threshold = args["threshold"].as_u64().unwrap_or(0) as u8;
+
+                        let roll_result = shadowrun_dice_roll(dice_number, threshold);
+                        let tool_output = serde_json::to_string(&roll_result)?;
+
+                        let tool_call_id = tool_call.id.clone();
+                        let pending_tool_outputs_clone = Arc::clone(&pending_tool_outputs);
+
+                        let mut outputs = pending_tool_outputs_clone.lock().await;
+                        let tool_output_clone = tool_output.clone();
+                        let tool_call_id_clone = tool_call_id.clone();
+                        outputs.push(ToolsOutputs {
+                            tool_call_id: Some(tool_call_id),
+                            output: Some(tool_output),
+                        });
+
+                        // Submit the tool output immediately
+                        let submit_request = SubmitToolOutputsRunRequest {
+                            tool_outputs: vec![ToolsOutputs {
+                                tool_call_id: Some(tool_call_id_clone),
+                                output: Some(tool_output_clone),
+                            }],
+                            stream: None,
+                        };
+                        client
+                            .threads()
+                            .runs(thread_id)
+                            .submit_tool_outputs(&run.id, submit_request)
+                            .await?;
+                    }
                     if tool_call.function.name == "generate_character_image" {
                         let args: serde_json::Value =
                             serde_json::from_str(&tool_call.function.arguments)?;
