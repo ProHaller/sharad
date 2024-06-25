@@ -141,9 +141,28 @@ pub async fn change_settings(
         match choice.trim() {
             "1" => {
                 // Handle language change
+                let new_language = display.get_user_input("Enter new language:");
+                if !new_language.trim().is_empty() {
+                    settings.language = new_language;
+                    display.print_wrapped(
+                        &format!("Language changed to: {}", settings.language),
+                        Color::Green,
+                    );
+                } else {
+                    display
+                        .print_wrapped("Language cannot be empty. No changes made.", Color::Yellow);
+                }
             }
             "2" => {
                 // Handle API key change
+                let new_api_key = display.get_user_input("Enter new OpenAI API Key:");
+                if is_valid_key(&new_api_key).await {
+                    settings.openai_api_key = new_api_key;
+                    display.print_wrapped("API Key updated successfully.", Color::Green);
+                } else {
+                    display.print_wrapped("Invalid API Key. No changes made.", Color::Red);
+                }
+                display.get_user_input("Press Enter to continue...");
             }
             "3" => {
                 settings.audio_output_enabled = !settings.audio_output_enabled;

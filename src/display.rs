@@ -1,7 +1,8 @@
 use crate::settings::load_settings;
 use colored::*;
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use std::io::{self, Write};
-use textwrap::{fill, wrap};
+use textwrap::wrap;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone)]
@@ -18,10 +19,15 @@ impl Display {
     pub fn print_centered(&self, text: &str, color: Color) {
         let wrapped: Vec<String> = wrap(text, self.term_width - 4)
             .into_iter()
-            .map(|s| s.to_string())
+            .map(|s| s.into_owned())
             .collect();
         for line in wrapped {
-            let padding = (self.term_width - UnicodeWidthStr::width(line.as_str())) / 2;
+            let line_width = UnicodeWidthStr::width(line.as_str());
+            let padding = if self.term_width > line_width {
+                (self.term_width - line_width) / 2
+            } else {
+                0
+            };
             println!("{}{}", " ".repeat(padding), line.color(color));
         }
     }
@@ -43,8 +49,52 @@ impl Display {
     }
 
     pub fn print_wrapped(&self, text: &str, color: Color) {
-        let wrapped_text = fill(text, self.term_width - 4);
-        self.print_centered(&wrapped_text, color);
+        let unescaped_text = unescape(text);
+        let parser = Parser::new(&unescaped_text);
+        let mut is_bold = false;
+        let mut is_italic = false;
+        let mut buffer = String::new();
+
+        for event in parser {
+            match event {
+                Event::Start(tag) => match tag {
+                    Tag::Emphasis => is_italic = true,
+                    Tag::Strong => is_bold = true,
+                    _ => {}
+                },
+                Event::End(tag) => match tag {
+                    TagEnd::Emphasis => is_italic = false,
+                    TagEnd::Strong => is_bold = false,
+                    _ => {}
+                },
+                Event::Text(text) => {
+                    let mut styled_text = text.to_string();
+                    if is_bold {
+                        styled_text = styled_text.bold().to_string();
+                    }
+                    if is_italic {
+                        styled_text = styled_text.italic().to_string();
+                    }
+                    buffer.push_str(&styled_text);
+                }
+                _ => {}
+            }
+        }
+
+        let lines: Vec<&str> = buffer.lines().collect();
+        for line in lines {
+            let wrapped_lines = wrap(line, self.term_width - 4);
+            for wrapped_line in wrapped_lines {
+                let wrapped_line = wrapped_line.into_owned(); // Convert Cow<str> to String
+                let line_width = UnicodeWidthStr::width(wrapped_line.as_str());
+                let padding = if self.term_width > line_width {
+                    (self.term_width - line_width) / 2
+                } else {
+                    0
+                };
+                println!("{}{}", " ".repeat(padding), wrapped_line.color(color));
+            }
+        }
     }
 
     pub fn get_user_input(&self, prompt: &str) -> String {
@@ -78,4 +128,28 @@ impl Display {
             }
         }
     }
+}
+
+fn unescape(s: &str) -> String {
+    let mut unescaped = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => unescaped.push('\n'),
+                Some('r') => unescaped.push('\r'),
+                Some('t') => unescaped.push('\t'),
+                Some('\\') => unescaped.push('\\'),
+                Some('"') => unescaped.push('"'),
+                Some(other) => {
+                    unescaped.push('\\');
+                    unescaped.push(other);
+                }
+                None => unescaped.push('\\'),
+            }
+        } else {
+            unescaped.push(ch);
+        }
+    }
+    unescaped
 }

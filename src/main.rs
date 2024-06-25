@@ -69,6 +69,7 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
         println!("No new updates found.");
     }
 
+    println!();
     let display = Display::new();
     display.get_user_input("press enter to continue...");
     Ok(())
