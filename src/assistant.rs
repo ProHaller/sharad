@@ -638,10 +638,12 @@ async fn main_conversation_loop(
         display.print_debug("Debug: Getting latest message", Color::Magenta);
         let response_text = get_latest_message(client, thread_id).await?;
         log_and_display_message(log_file, &response_text, "Game Master", display)?;
+        display.print_debug("Debug: Message displayed", Color::Magenta);
 
         // Parse the JSON response to extract the narration for audio
         let json_response: Value = serde_json::from_str(&response_text)?;
-        if let Some(narration) = json_response.get("Narration") {
+
+        if let Some(narration) = json_response.get("narration") {
             generate_and_play_audio(audio, narration.as_str().unwrap_or(""), "narrator").await?;
         }
     }

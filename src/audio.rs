@@ -37,7 +37,7 @@ pub async fn generate_and_play_audio(
 
     let voice = match role {
         "user" => Voice::Shimmer,
-        "narrator" => Voice::Nova,
+        "narrator" => Voice::Onyx,
         _ => Voice::Nova,
     };
 
@@ -88,7 +88,8 @@ pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Bo
         Client::with_config(OpenAIConfig::default().with_api_key(env::var("OPENAI_API_KEY")?));
     let audio = Audio::new(&client);
 
-    display.print_wrapped("\nTranscribing audio...", Color::Yellow);
+    println!();
+    display.print_wrapped("Transcribing audio...", Color::Yellow);
 
     match audio
         .transcribe(
