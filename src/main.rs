@@ -223,7 +223,6 @@ async fn main() -> Result<(), SharadError> {
                     }
                     Err(e) => display.print_wrapped(&format!("{}", e), Color::Red),
                 }
-                display.get_user_input("Press Enter to continue...");
             }
             "3" => {
                 let prompt = display.get_user_input("What image would you like to generate?");
