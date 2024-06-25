@@ -60,6 +60,9 @@ impl Display {
                 Event::Start(tag) => match tag {
                     Tag::Emphasis => is_italic = true,
                     Tag::Strong => is_bold = true,
+                    Tag::List(Some(number)) => {
+                        buffer.push_str(&format!("{}. ", number));
+                    }
                     _ => {}
                 },
                 Event::End(tag) => match tag {
