@@ -1,10 +1,10 @@
+use crate::audio::{generate_and_play_audio, record_and_transcribe_audio};
 use crate::display::Display;
 use crate::error::SharadError;
 use crate::image::{generate_character_image, Appearance, CharacterInfo};
+use crate::menu::{choose_assistant, load_game_menu};
 use crate::settings::load_settings;
 use crate::utils::{correct_input, shadowrun_dice_roll};
-
-use crate::audio::{generate_and_play_audio, record_and_transcribe_audio};
 use async_openai::{
     config::OpenAIConfig,
     types::{
@@ -16,24 +16,19 @@ use async_openai::{
     Audio, Client,
 };
 use colored::*;
-use crossterm::{
-    cursor, execute,
-    terminal::{Clear, ClearType},
-};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::future::Future;
-use std::io::{stdout, Write};
-use std::path::Path;
+use std::io::Write;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::spawn;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-const SAVE_DIR: &str = "./data/logs/saves/";
+pub const SAVE_DIR: &str = "./data/logs/saves/";
 
 #[derive(Serialize)]
 struct ListAssistantsQuery {}
@@ -50,6 +45,7 @@ pub fn save_conversation(
     display: &Display,
 ) -> Result<(), SharadError> {
     let save_name = display.get_user_input("Enter a name for the save file:");
+    println!();
     let save_file = format!("{}{}.json", SAVE_DIR, save_name);
     let save = Save {
         assistant_id: assistant_id.to_string(),
@@ -63,100 +59,10 @@ pub fn save_conversation(
     Ok(())
 }
 
-pub fn load_conversation_from_file(display: &Display, art: &str) -> Result<Save, SharadError> {
-    fn draw_header(display: &Display, art: &str) -> Result<(), SharadError> {
-        execute!(stdout(), Clear(ClearType::All), cursor::MoveTo(0, 0))?;
-        display.print_centered(art, Color::Green);
-        display.print_centered(
-            &format!("Welcome to Sharad v{}", env!("CARGO_PKG_VERSION")),
-            Color::Cyan,
-        );
-        display.print_centered("You can quit by inputing \"exit\".", Color::Yellow);
-        display.print_separator(Color::Blue);
-        Ok(())
-    }
-
-    draw_header(display, art)?;
-    display.print_wrapped("Loading a game.", Color::Green);
-
-    let save_dir = Path::new(SAVE_DIR);
-
-    // Check if the save directory exists
-    if !save_dir.exists() {
-        display.print_wrapped("No save folder found. Creating one now.", Color::Yellow);
-        fs::create_dir_all(save_dir).map_err(SharadError::Io)?;
-        return Err(SharadError::Message("No save files available yet.".into()));
-    }
-
-    let save_files: Vec<_> = fs::read_dir(save_dir)
-        .map_err(SharadError::Io)?
-        .filter_map(|entry| {
-            entry.ok().and_then(|e| {
-                let path = e.path();
-                if path.is_file()
-                    && path.extension().and_then(|os_str| os_str.to_str()) == Some("json")
-                {
-                    path.file_stem()
-                        .and_then(|os_str| os_str.to_str().map(|s| s.to_string()))
-                } else {
-                    None
-                }
-            })
-        })
-        .collect();
-
-    if save_files.is_empty() {
-        return Err(SharadError::Message("No save files found.".into()));
-    }
-
-    display.print_wrapped("Input '0' to go back to main menu.", Color::Yellow);
-    display.print_wrapped("Available save files:", Color::Yellow);
-    for (index, save_file) in save_files.iter().enumerate() {
-        display.print_wrapped(&format!("{}. {}", index + 1, save_file), Color::White);
-    }
-
-    let choice = loop {
-        let input = display.get_user_input("Enter the number of the save file to load:");
-        match input.trim().parse::<usize>() {
-            Ok(num) if num > 0 && num <= save_files.len() => break num,
-            Ok(0) => return Err(SharadError::Message("Back to main menu.".into())),
-            _ => {
-                display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red);
-                // Redraw the header and menu after an invalid choice
-                draw_header(display, art)?;
-                display.print_wrapped("Loading a game.", Color::Green);
-                display.print_wrapped("Input '0' to go back to main menu.", Color::Yellow);
-                display.print_wrapped("Available save files:", Color::Yellow);
-                for (index, save_file) in save_files.iter().enumerate() {
-                    display.print_wrapped(&format!("{}. {}", index + 1, save_file), Color::White);
-                }
-            }
-        }
-    };
-
-    let save_file = save_dir.join(format!("{}.json", save_files[choice - 1]));
-    let data = fs::read_to_string(save_file).map_err(SharadError::Io)?;
-    let save: Save = serde_json::from_str(&data).map_err(SharadError::SerdeJson)?;
-    Ok(save)
-}
-
-async fn choose_assistant(
-    assistants: Vec<(String, String)>,
-    display: &Display,
-) -> Result<String, SharadError> {
-    display.print_wrapped("Available Game cartridges:", Color::Yellow);
-    for (i, (_, name)) in assistants.iter().enumerate() {
-        display.print_wrapped(&format!("{}. {}", i + 1, name), Color::White);
-    }
-
-    loop {
-        let input = display.get_user_input("Choose a game cartridge by number:");
-        match input.trim().parse::<usize>() {
-            Ok(num) if num > 0 && num <= assistants.len() => {
-                return Ok(assistants[num - 1].0.clone())
-            }
-            _ => display.print_wrapped("Invalid choice. Please enter a valid number.", Color::Red),
-        }
+pub async fn load_conversation_from_file(display: &Display) -> Result<Save, SharadError> {
+    match load_game_menu(display).await? {
+        Some(save) => Ok(save),
+        None => Err(SharadError::Message("Back to main menu.".into())),
     }
 }
 
@@ -178,7 +84,6 @@ pub async fn run_conversation(
     log_file: &mut File,
     is_new_game: bool,
     display: &Display,
-    art: &str,
 ) -> Result<(), SharadError> {
     let client = Client::new();
     let language = load_settings()?.language;
@@ -189,32 +94,38 @@ pub async fn run_conversation(
             return Ok(());
         }
 
-        let assistant_id = choose_assistant(assistants, display).await?;
+        match choose_assistant(assistants, display).await? {
+            Some(assistant_id) => {
+                let thread = client
+                    .threads()
+                    .create(CreateThreadRequestArgs::default().build()?)
+                    .await?;
 
-        let thread = client
-            .threads()
-            .create(CreateThreadRequestArgs::default().build()?)
-            .await?;
+                // For a new game, send an initial message
+                let initial_message = CreateMessageRequestArgs::default()
+                    .role(MessageRole::User)
+                    .content(format!("You are the Game Master of a Role Playing Game. Start by welcoming the player to the game world and ask them to describe their character. The description should include the character's name, background, and motivations. Note that the player is considered a beginner in this world until they have gained significant experience. Write your response in valid JSON within a \"narration\" tag. Always write in the following language: {}", language))
+                    .build()?;
+                display.print_debug(
+                    &format!("Debug: Initial message: {:?}", initial_message.content),
+                    Color::Magenta,
+                );
+                client
+                    .threads()
+                    .messages(&thread.id)
+                    .create(initial_message)
+                    .await?;
 
-        // For a new game, send an initial message
-        let initial_message = CreateMessageRequestArgs::default()
-            .role(MessageRole::User)
-            .content(format!("You are the Game Master of a Role Playing Game. Start by welcoming the player to the game world and ask them to describe their character. The description should include the character's name, background, and motivations. Note that the player is considered a beginner in this world until they have gained significant experience. Write your response in valid JSON within a \"narration\" tag. Always write in the following language: {}", language))
-            .build()?;
-        display.print_debug(
-            &format!("Debug: Initial message: {:?}", initial_message.content),
-            Color::Magenta,
-        );
-        client
-            .threads()
-            .messages(&thread.id)
-            .create(initial_message)
-            .await?;
-
-        save_conversation(&assistant_id, &thread.id, display)?;
-        (assistant_id, thread.id)
+                save_conversation(&assistant_id, &thread.id, display)?;
+                (assistant_id, thread.id)
+            }
+            None => {
+                // User chose to return to the main menu
+                return Ok(());
+            }
+        }
     } else {
-        let save = load_conversation_from_file(display, art)?;
+        let save = load_conversation_from_file(display).await?;
         (save.assistant_id, save.thread_id)
     };
 
@@ -371,13 +282,14 @@ async fn handle_new_game(
     if let Some(latest_message) = messages.data.first() {
         if let Some(MessageContent::Text(text_content)) = latest_message.content.first() {
             let response_text = &text_content.text.value;
-            log_and_display_message(
-                log_file,
-                response_text,
-                "Game Master's initial message",
-                display,
-            )?;
-            generate_and_play_audio(audio, response_text, "Game Master").await?;
+            log_and_display_message(log_file, response_text, "Game Master", display)?;
+            // Parse the JSON response to extract the narration for audio
+            let json_response: Value = serde_json::from_str(response_text)?;
+
+            if let Some(narration) = json_response.get("narration") {
+                generate_and_play_audio(audio, narration.as_str().unwrap_or(""), "Game Master")
+                    .await?;
+            }
         }
     }
 
@@ -644,7 +556,7 @@ async fn main_conversation_loop(
         let json_response: Value = serde_json::from_str(&response_text)?;
 
         if let Some(narration) = json_response.get("narration") {
-            generate_and_play_audio(audio, narration.as_str().unwrap_or(""), "narrator").await?;
+            generate_and_play_audio(audio, narration.as_str().unwrap_or(""), "Game Master").await?;
         }
     }
 
@@ -760,7 +672,7 @@ fn display_message(message: &MessageObject, display: &Display) {
                         );
                     }
                     if let Some(player_action) = json.get("player_action") {
-                        display.print_debug(&format!("{}", player_action), Color::Blue);
+                        display.print_wrapped(&format!("{}", player_action), Color::Blue);
                     }
                 }
             }
@@ -772,12 +684,7 @@ fn display_message(message: &MessageObject, display: &Display) {
                     }
                     // Display instructions and Game Master Reasoning as debug
                     if let Some(narration) = json.get("narration") {
-                        display.print_debug(&format!("{}", narration), Color::Green);
-                    }
-
-                    // Display Narration in green
-                    if let Some(narration) = json.get("Narration") {
-                        display.print_wrapped(narration.as_str().unwrap_or(""), Color::Green);
+                        display.print_wrapped(&format!("{}", narration), Color::Green);
                     }
                 } else {
                     // If it's not valid JSON, just display the text as before

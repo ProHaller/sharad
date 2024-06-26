@@ -1,6 +1,5 @@
 use crate::settings::load_settings;
 use colored::*;
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use std::io::{self, Write};
 use textwrap::wrap;
 use unicode_width::UnicodeWidthStr;
@@ -50,54 +49,51 @@ impl Display {
 
     pub fn print_wrapped(&self, text: &str, color: Color) {
         let unescaped_text = unescape(text);
-        let parser = Parser::new(&unescaped_text);
+        let lines: Vec<&str> = unescaped_text.split('\n').collect();
+
+        for line in lines {
+            if line.trim().is_empty() {
+                println!();
+            } else {
+                let formatted_line = self.apply_basic_formatting(line);
+                let wrapped_lines = wrap(&formatted_line, self.term_width - 4);
+                for wrapped_line in wrapped_lines {
+                    let wrapped_line = wrapped_line.into_owned();
+                    let line_width = UnicodeWidthStr::width(wrapped_line.as_str());
+                    let padding = if self.term_width > line_width {
+                        (self.term_width - line_width) / 2
+                    } else {
+                        0
+                    };
+                    println!("{}{}", " ".repeat(padding), wrapped_line.color(color));
+                }
+            }
+        }
+    }
+
+    fn apply_basic_formatting(&self, line: &str) -> String {
+        let mut result = String::new();
+        let mut chars = line.chars().peekable();
         let mut is_bold = false;
         let mut is_italic = false;
-        let mut buffer = String::new();
 
-        for event in parser {
-            match event {
-                Event::Start(tag) => match tag {
-                    Tag::Emphasis => is_italic = true,
-                    Tag::Strong => is_bold = true,
-                    Tag::List(Some(number)) => {
-                        buffer.push_str(&format!("{}. ", number));
+        while let Some(ch) = chars.next() {
+            match ch {
+                '*' => {
+                    if chars.peek() == Some(&'*') {
+                        chars.next();
+                        is_bold = !is_bold;
+                        result.push_str(if is_bold { "\x1B[1m" } else { "\x1B[22m" });
+                    } else {
+                        is_italic = !is_italic;
+                        result.push_str(if is_italic { "\x1B[3m" } else { "\x1B[23m" });
                     }
-                    _ => {}
-                },
-                Event::End(tag) => match tag {
-                    TagEnd::Emphasis => is_italic = false,
-                    TagEnd::Strong => is_bold = false,
-                    _ => {}
-                },
-                Event::Text(text) => {
-                    let mut styled_text = text.to_string();
-                    if is_bold {
-                        styled_text = styled_text.bold().to_string();
-                    }
-                    if is_italic {
-                        styled_text = styled_text.italic().to_string();
-                    }
-                    buffer.push_str(&styled_text);
                 }
-                _ => {}
+                _ => result.push(ch),
             }
         }
 
-        let lines: Vec<&str> = buffer.lines().collect();
-        for line in lines {
-            let wrapped_lines = wrap(line, self.term_width - 4);
-            for wrapped_line in wrapped_lines {
-                let wrapped_line = wrapped_line.into_owned(); // Convert Cow<str> to String
-                let line_width = UnicodeWidthStr::width(wrapped_line.as_str());
-                let padding = if self.term_width > line_width {
-                    (self.term_width - line_width) / 2
-                } else {
-                    0
-                };
-                println!("{}{}", " ".repeat(padding), wrapped_line.color(color));
-            }
-        }
+        result
     }
 
     pub fn get_user_input(&self, prompt: &str) -> String {

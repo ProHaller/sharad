@@ -36,9 +36,9 @@ pub async fn generate_and_play_audio(
     }
 
     let voice = match role {
-        "user" => Voice::Shimmer,
-        "narrator" => Voice::Onyx,
-        _ => Voice::Nova,
+        "Player" => Voice::Shimmer,
+        "Game Master" => Voice::Onyx,
+        _ => Voice::Onyx,
     };
 
     let response = audio
@@ -89,7 +89,8 @@ pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Bo
     let audio = Audio::new(&client);
 
     println!();
-    display.print_wrapped("Transcribing audio...", Color::Yellow);
+    display.print_wrapped("Transcribing audio", Color::Yellow);
+    display.print_thinking_dot();
 
     match audio
         .transcribe(
