@@ -54,7 +54,6 @@ pub const ART: &str = r#"
     | Sharad game \  ||||| |..  // A \\*/| . ..| * ||| || ..| |  .  ||||,|*| | \  |
     |  By Roland  |\. \\\| |.. // /|\ \\ | . ..|** ||| || ..| | . . ||||.|*| |\\  |
     |   and the    \\  ||| |, ||.| | | ||| . ..| * ||| ||  .| | ..  ||||.|*| |||| |
-    | Haller Family || ||| |, ||.| | | ||| . ..| * ||| || ..| | . ..||||.|*| |||| |
      ----------------------------------------------------------------------------- 
 
   _____ _                         _
@@ -444,7 +443,7 @@ async fn handle_load_game_selection(
     }
 }
 
-fn draw_menu(display: &Display, selected: usize) -> Result<(), SharadError> {
+pub fn draw_menu(display: &Display, selected: usize) -> Result<(), SharadError> {
     clear_menu_area()?;
 
     let mut current_line = ART_HEIGHT + 1; // Start one line below the art
