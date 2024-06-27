@@ -6,20 +6,19 @@ use crate::error::SharadError;
 use crate::image;
 use crate::settings::{load_settings, save_settings, validate_settings, Settings};
 
-use colored::*;
+use crossterm::style::Color;
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
-    execute,
+    event::{self, Event, KeyCode, KeyEventKind},
+    execute, style,
+    style::SetForegroundColor,
     terminal::{self, Clear, ClearType},
 };
-use std::collections::VecDeque;
 use std::fs::File;
-use std::io::stdout;
+use std::io;
+use std::io::{stdout, Write};
 use std::path::Path;
-use std::time::{Duration, Instant};
 use tokio::fs;
-use tokio::time::sleep;
 
 pub const MAIN_MENU_ITEMS: [&str; 5] = [
     "Start a new game",
@@ -29,7 +28,7 @@ pub const MAIN_MENU_ITEMS: [&str; 5] = [
     "Exit",
 ];
 
-const ART_HEIGHT: u16 = 40;
+const ART_HEIGHT: u16 = 35;
 pub const ART: &str = r#"
 
 
@@ -65,10 +64,10 @@ pub const ART: &str = r#"
     "#;
 
 pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
-    let display = Display::new();
-    display_art(&display)?;
+    let mut display = Display::new();
+    display_art(&mut display)?;
     let mut settings = load_settings()?;
-    validate_settings(&mut settings, &display).await?;
+    validate_settings(&mut settings, &mut display).await?;
 
     terminal::enable_raw_mode()?;
 
@@ -78,7 +77,7 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
     loop {
         draw_menu(&display, selected)?;
 
-        if let Ok(key_event) = get_input_with_delay().await {
+        if let Ok(Event::Key(key_event)) = event::read() {
             if key_event.kind == KeyEventKind::Press {
                 match key_event.code {
                     KeyCode::Up => {
@@ -91,7 +90,7 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
                         if handle_main_menu_selection(
                             &mut log_file,
                             selected,
-                            &display,
+                            &mut display,
                             &mut settings,
                         )
                         .await?
@@ -99,22 +98,22 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
                             break;
                         }
                     }
+                    KeyCode::Esc => {
+                        break;
+                    }
                     KeyCode::Char(c) => {
-                        if ('1'..='5').contains(&c) {
-                            let index = c as usize - '1' as usize;
+                        if let Some(index) = c.to_digit(10).map(|d| d as usize - 1) {
                             if index < menu_items_count
                                 && handle_main_menu_selection(
                                     &mut log_file,
                                     index,
-                                    &display,
+                                    &mut display,
                                     &mut settings,
                                 )
                                 .await?
                             {
                                 break;
                             }
-                        } else if c == 'q' {
-                            break;
                         }
                     }
                     _ => {}
@@ -128,70 +127,9 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
     Ok(())
 }
 
-async fn handle_main_menu_selection(
-    log_file: &mut File,
-    selected: usize,
-    display: &Display,
-    settings: &mut Settings,
-) -> Result<bool, SharadError> {
-    terminal::disable_raw_mode()?;
-    let should_exit = match selected {
-        0 => {
-            if let Err(e) = run_conversation(log_file, true, display).await {
-                display.print_wrapped(&format!("Failed to run conversation: {}", e), Color::Red);
-            }
-            false
-        }
-        1 => {
-            display.print_wrapped("Loading a game.", Color::Green);
-            match load_conversation_from_file(display).await {
-                Ok(save) => {
-                    if let Err(e) = run_conversation_with_save(
-                        log_file,
-                        &save.assistant_id,
-                        &save.thread_id,
-                        false,
-                        display,
-                    )
-                    .await
-                    {
-                        display.print_wrapped(
-                            &format!("Failed to run conversation: {}", e),
-                            Color::Red,
-                        );
-                    }
-                }
-                Err(e) => display.print_wrapped(&format!("{}", e), Color::Red),
-            }
-            false
-        }
-        2 => {
-            let prompt = display.get_user_input("What image would you like to generate?");
-            if let Err(e) = image::generate_and_save_image(&prompt).await {
-                display.print_wrapped(&format!("Failed to generate image: {}", e), Color::Red);
-            }
-            false
-        }
-        3 => {
-            if let Err(e) = change_settings(settings, display).await {
-                display.print_wrapped(&format!("Failed to change settings: {}", e), Color::Red);
-            }
-            false
-        }
-        4 => {
-            display.print_wrapped("Exiting game.", Color::Green);
-            true
-        }
-        _ => unreachable!(),
-    };
-    display_art(display)?; // Redisplay the art after user input
-    terminal::enable_raw_mode()?;
-    Ok(should_exit)
-}
-
 pub async fn change_settings(
     settings: &mut Settings,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<(), SharadError> {
     display_art(display)?;
 
@@ -203,7 +141,7 @@ pub async fn change_settings(
     loop {
         draw_settings_menu(display, settings, selected)?;
 
-        if let Event::Key(key_event) = event::read()? {
+        if let Ok(Event::Key(key_event)) = event::read() {
             if key_event.kind == KeyEventKind::Press {
                 match key_event.code {
                     KeyCode::Up => {
@@ -217,17 +155,17 @@ pub async fn change_settings(
                             break;
                         }
                     }
+                    KeyCode::Esc => {
+                        save_settings(settings)?;
+                        break;
+                    }
                     KeyCode::Char(c) => {
-                        if ('1'..='6').contains(&c) {
-                            let index = c as usize - '1' as usize;
+                        if let Some(index) = c.to_digit(10).map(|d| d as usize - 1) {
                             if index < menu_items_count
                                 && handle_settings_selection(settings, display, index).await?
                             {
                                 break;
                             }
-                        } else if c == 'q' {
-                            save_settings(settings)?;
-                            break;
                         }
                     }
                     _ => {}
@@ -240,29 +178,264 @@ pub async fn change_settings(
     Ok(())
 }
 
+fn draw_menu(display: &Display, selected: usize) -> Result<(), SharadError> {
+    clear_menu_area()?;
+
+    let mut current_line = ART_HEIGHT + 1;
+
+    print_centered_line(display, "Main Menu", Color::Green, current_line)?;
+    current_line += 2;
+
+    let max_width = MAIN_MENU_ITEMS
+        .iter()
+        .map(|item| item.len())
+        .max()
+        .unwrap_or(0);
+
+    let (term_width, _) = terminal::size()?;
+    let left_margin = (term_width - max_width as u16) / 2;
+
+    for (i, item) in MAIN_MENU_ITEMS.iter().enumerate() {
+        let prefix = if i == selected { "> " } else { "  " };
+        let color = if i == selected {
+            Color::Green
+        } else {
+            Color::White
+        };
+        let numbered_item = format!("{}{}. {}", prefix, i + 1, item);
+
+        execute!(
+            io::stdout(),
+            cursor::MoveTo(left_margin, current_line),
+            SetForegroundColor(color)
+        )?;
+        print!("{}", numbered_item);
+        execute!(io::stdout(), style::ResetColor)?;
+
+        current_line += 1;
+    }
+
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn draw_settings_menu(
+    display: &Display,
+    settings: &Settings,
+    selected: usize,
+) -> Result<(), SharadError> {
+    clear_menu_area()?;
+
+    let mut current_line = ART_HEIGHT + 1;
+
+    print_centered_line(display, "Settings Menu", Color::Green, current_line)?;
+    current_line += 2;
+
+    let max_width = SETTINGS_MENU_ITEMS
+        .iter()
+        .enumerate()
+        .map(|(i, item)| match i {
+            0 => item.len() + settings.language.len() + 13,
+            2..=4 => item.len() + 7,
+            _ => item.len(),
+        })
+        .max()
+        .unwrap_or(0);
+
+    let (term_width, _) = terminal::size()?;
+    let left_margin = (term_width - max_width as u16) / 2;
+
+    for (i, item) in SETTINGS_MENU_ITEMS.iter().enumerate() {
+        let prefix = if i == selected { "> " } else { "  " };
+        let color = if i == selected {
+            Color::Green
+        } else {
+            Color::White
+        };
+
+        let display_text = match i {
+            0 => format!(
+                "{}{}. {} (Current: {})",
+                prefix,
+                i + 1,
+                item,
+                settings.language
+            ),
+            1 => format!("{}{}. {}", prefix, i + 1, item),
+            2 => format!(
+                "{}{}. {} ({})",
+                prefix,
+                i + 1,
+                item,
+                settings.audio_output_enabled
+            ),
+            3 => format!(
+                "{}{}. {} ({})",
+                prefix,
+                i + 1,
+                item,
+                settings.audio_input_enabled
+            ),
+            4 => format!("{}{}. {} ({})", prefix, i + 1, item, settings.debug_mode),
+            5 => format!("{}{}. {}", prefix, i + 1, item),
+            _ => unreachable!(),
+        };
+
+        execute!(
+            io::stdout(),
+            cursor::MoveTo(left_margin, current_line),
+            SetForegroundColor(color)
+        )?;
+        print!("{}", display_text);
+        execute!(io::stdout(), style::ResetColor)?;
+
+        current_line += 1;
+    }
+
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn clear_menu_area() -> Result<(), SharadError> {
+    execute!(
+        io::stdout(),
+        cursor::MoveTo(0, ART_HEIGHT),
+        Clear(ClearType::FromCursorDown)
+    )?;
+    io::stdout().flush()?;
+    Ok(())
+}
+
+fn print_centered_line(
+    _display: &Display,
+    text: &str,
+    color: Color,
+    line: u16,
+) -> Result<(), SharadError> {
+    let (term_width, _) = terminal::size()?;
+    let start_x = (term_width - text.len() as u16) / 2;
+    execute!(
+        io::stdout(),
+        cursor::MoveTo(start_x, line),
+        SetForegroundColor(color)
+    )?;
+    print!("{}", text);
+    execute!(io::stdout(), style::ResetColor)?;
+    io::stdout().flush()?;
+    Ok(())
+}
+
+async fn handle_main_menu_selection(
+    log_file: &mut File,
+    selected: usize,
+    display: &mut Display,
+    settings: &mut Settings,
+) -> Result<bool, SharadError> {
+    terminal::disable_raw_mode()?;
+
+    let should_exit = match selected {
+        0 => {
+            match run_conversation(log_file, true, display).await {
+                Ok(_) => {
+                    display.print_wrapped("Conversation completed successfully.", Color::Green)
+                }
+                Err(e) => {
+                    display.print_wrapped(&format!("Failed to run conversation: {}", e), Color::Red)
+                }
+            }
+            false
+        }
+        1 => {
+            display.print_wrapped("Loading a game.", Color::Green);
+            match load_conversation_from_file(display).await {
+                Ok(save) => {
+                    match run_conversation_with_save(
+                        log_file,
+                        &save.assistant_id,
+                        &save.thread_id,
+                        false,
+                        display,
+                    )
+                    .await
+                    {
+                        Ok(_) => display.print_wrapped(
+                            "Saved game loaded and conversation completed successfully.",
+                            Color::Green,
+                        ),
+                        Err(e) => display.print_wrapped(
+                            &format!("Failed to run conversation with save: {}", e),
+                            Color::Red,
+                        ),
+                    }
+                }
+                Err(e) => display.print_wrapped(&format!("Failed to load game: {}", e), Color::Red),
+            }
+            false
+        }
+        2 => {
+            match display.get_user_input("What image would you like to generate?")? {
+                Some(prompt) => match image::generate_and_save_image(&prompt).await {
+                    Ok(_) => display
+                        .print_wrapped("Image generated and saved successfully.", Color::Green),
+                    Err(e) => display
+                        .print_wrapped(&format!("Failed to generate image: {}", e), Color::Red),
+                },
+                None => display.print_wrapped("Image generation cancelled.", Color::Yellow),
+            }
+            false
+        }
+        3 => {
+            match change_settings(settings, display).await {
+                Ok(_) => display.print_wrapped("Settings updated successfully.", Color::Green),
+                Err(e) => {
+                    display.print_wrapped(&format!("Failed to change settings: {}", e), Color::Red)
+                }
+            }
+            false
+        }
+        4 => {
+            display.print_wrapped("Exiting game.", Color::Green);
+            true
+        }
+        _ => {
+            return Err(SharadError::InvalidMenuSelection(String::from(
+                "Invalid menu selection.",
+            )))
+        }
+    };
+
+    display_art(display)?;
+    terminal::enable_raw_mode()?;
+    Ok(should_exit)
+}
+
 async fn handle_settings_selection(
     settings: &mut Settings,
-    display: &Display,
+    display: &mut Display,
     selected: usize,
 ) -> Result<bool, SharadError> {
     terminal::disable_raw_mode()?;
+
     let should_exit = match selected {
         0 => {
-            let new_language = display.get_user_input("Enter the language you want to play in:");
-            if !new_language.trim().is_empty() {
-                settings.language = new_language;
-                display.print_wrapped(
-                    &format!("Language changed to {}.", settings.language),
-                    Color::Green,
-                );
-            } else {
-                display.print_wrapped("Language cannot be empty. Please try again.", Color::Red);
+            match display.get_user_input("Enter the language you want to play in:")? {
+                Some(new_language) if !new_language.trim().is_empty() => {
+                    settings.language = new_language.trim().to_string();
+                    display.print_wrapped(
+                        &format!("Language changed to {}.", settings.language),
+                        Color::Green,
+                    );
+                }
+                Some(_) => display
+                    .print_wrapped("Language cannot be empty. No changes made.", Color::Yellow),
+                None => display.print_wrapped("Language change cancelled.", Color::Yellow),
             }
             false
         }
         1 => {
             settings.openai_api_key.clear();
             validate_settings(settings, display).await?;
+            display.print_wrapped("OpenAI API key cleared and re-validated.", Color::Green);
             false
         }
         2 => {
@@ -289,12 +462,23 @@ async fn handle_settings_selection(
             );
             false
         }
-        5 => {
-            save_settings(settings)?;
-            true
+        5 => match save_settings(settings) {
+            Ok(_) => {
+                display.print_wrapped("Settings saved successfully.", Color::Green);
+                true
+            }
+            Err(e) => {
+                display.print_wrapped(&format!("Failed to save settings: {}", e), Color::Red);
+                false
+            }
+        },
+        _ => {
+            return Err(SharadError::InvalidMenuSelection(String::from(
+                "Invalid menu selection.",
+            )))
         }
-        _ => unreachable!(),
     };
+
     terminal::enable_raw_mode()?;
     Ok(should_exit)
 }
@@ -334,6 +518,10 @@ pub async fn choose_assistant(
                             Ok(Some(assistants[selected].0.clone()))
                         };
                     }
+                    KeyCode::Esc => {
+                        terminal::disable_raw_mode()?;
+                        return Ok(None);
+                    }
                     KeyCode::Char(c) => {
                         if c >= '1' && c <= (menu_items_count as u8 + b'0') as char {
                             let index = c as usize - '1' as usize;
@@ -343,9 +531,6 @@ pub async fn choose_assistant(
                             } else {
                                 Ok(Some(assistants[index].0.clone()))
                             };
-                        } else if c == 'q' {
-                            terminal::disable_raw_mode()?;
-                            return Ok(None);
                         }
                     }
                     _ => {}
@@ -355,7 +540,7 @@ pub async fn choose_assistant(
     }
 }
 
-pub async fn load_game_menu(display: &Display) -> Result<Option<Save>, SharadError> {
+pub async fn load_game_menu(display: &mut Display) -> Result<Option<Save>, SharadError> {
     let save_dir = Path::new(SAVE_DIR);
 
     // Check if the save directory exists
@@ -381,7 +566,7 @@ pub async fn load_game_menu(display: &Display) -> Result<Option<Save>, SharadErr
 
     if save_files.is_empty() {
         display.print_wrapped("No save files found.", Color::Yellow);
-        display.get_user_input("Press Enter to continue...");
+        display.get_user_input("Press Enter to continue...")?;
         return Ok(None);
     }
 
@@ -409,15 +594,16 @@ pub async fn load_game_menu(display: &Display) -> Result<Option<Save>, SharadErr
                         terminal::disable_raw_mode()?;
                         return handle_load_game_selection(save_dir, &menu_items, selected).await;
                     }
-                    KeyCode::Char(c) => {
-                        if c >= '1' && c <= (menu_items_count as u8 + b'0') as char {
-                            let index = c as usize - '1' as usize;
-                            terminal::disable_raw_mode()?;
-                            return handle_load_game_selection(save_dir, &menu_items, index).await;
-                        } else if c == 'q' {
-                            terminal::disable_raw_mode()?;
-                            return Ok(None);
-                        }
+                    KeyCode::Esc => {
+                        terminal::disable_raw_mode()?;
+                        return Ok(None);
+                    }
+                    KeyCode::Char(c)
+                        if c >= '1' && c <= (menu_items_count as u8 + b'0') as char =>
+                    {
+                        let index = c as usize - '1' as usize;
+                        terminal::disable_raw_mode()?;
+                        return handle_load_game_selection(save_dir, &menu_items, index).await;
                     }
                     _ => {}
                 }
@@ -441,92 +627,6 @@ async fn handle_load_game_selection(
         let save: Save = serde_json::from_str(&data).map_err(SharadError::SerdeJson)?;
         Ok(Some(save))
     }
-}
-
-pub fn draw_menu(display: &Display, selected: usize) -> Result<(), SharadError> {
-    clear_menu_area()?;
-
-    let mut current_line = ART_HEIGHT + 1; // Start one line below the art
-
-    // Print the "Main Menu" title
-    print_centered_line(display, "Main Menu", Color::Green, current_line)?;
-    current_line += 1;
-
-    // Add an empty line after the title
-    current_line += 1;
-
-    for (i, item) in MAIN_MENU_ITEMS.iter().enumerate() {
-        let prefix = if i == selected { "> " } else { "  " };
-        let color = if i == selected {
-            Color::Green
-        } else {
-            Color::White
-        };
-        let numbered_item = format!("{}{}. {}", prefix, i + 1, item);
-        print_centered_line(display, &numbered_item, color, current_line)?;
-        current_line += 1;
-    }
-
-    Ok(())
-}
-
-pub fn draw_settings_menu(
-    display: &Display,
-    settings: &Settings,
-    selected: usize,
-) -> Result<(), SharadError> {
-    clear_menu_area()?;
-
-    let mut current_line = ART_HEIGHT + 1; // Start one line below the art
-
-    // Print the "Settings Menu" title
-    print_centered_line(display, "Settings Menu", Color::Green, current_line)?;
-    current_line += 1;
-
-    // Add an empty line after the title
-    current_line += 1;
-
-    for (i, item) in SETTINGS_MENU_ITEMS.iter().enumerate() {
-        let prefix = if i == selected { "> " } else { "  " };
-        let color = if i == selected {
-            Color::Green
-        } else {
-            Color::White
-        };
-
-        let display_text = match i {
-            0 => format!(
-                "{}{}. {} (Current: {})",
-                prefix,
-                i + 1,
-                item,
-                settings.language
-            ),
-            1 => format!("{}{}. {}", prefix, i + 1, item),
-            2 => format!(
-                "{}{}. {} ({})",
-                prefix,
-                i + 1,
-                item,
-                settings.audio_output_enabled
-            ),
-            3 => format!(
-                "{}{}. {} ({})",
-                prefix,
-                i + 1,
-                item,
-                settings.audio_input_enabled
-            ),
-            4 => format!("{}{}. {} ({})", prefix, i + 1, item, settings.debug_mode),
-            5 => format!("{}{}. {}", prefix, i + 1, item),
-            _ => unreachable!(),
-        };
-
-        print_centered_line(display, &display_text, color, current_line)?;
-        current_line += 1;
-    }
-
-    Ok(())
 }
 
 fn draw_assistant_menu(
@@ -591,27 +691,7 @@ fn draw_load_game_menu(
     Ok(())
 }
 
-fn clear_menu_area() -> Result<(), SharadError> {
-    execute!(
-        stdout(),
-        cursor::MoveTo(0, ART_HEIGHT),
-        Clear(ClearType::FromCursorDown)
-    )?;
-    Ok(())
-}
-
-fn print_centered_line(
-    display: &Display,
-    text: &str,
-    color: Color,
-    line: u16,
-) -> Result<(), SharadError> {
-    execute!(stdout(), cursor::MoveTo(0, line))?;
-    display.print_centered(text, color);
-    Ok(())
-}
-
-pub fn display_art(display: &Display) -> Result<(), SharadError> {
+pub fn display_art(display: &mut Display) -> Result<(), SharadError> {
     display.print_centered(ART, Color::Green);
     display.print_centered(
         &format!("Welcome to Sharad v{}", env!("CARGO_PKG_VERSION")),
@@ -623,11 +703,6 @@ pub fn display_art(display: &Display) -> Result<(), SharadError> {
         &format!("Welcome to Sharad v{}", env!("CARGO_PKG_VERSION")),
         Color::Cyan,
     );
-    display.print_centered(
-        "Use arrow keys to navigate, Enter to select, 'q' to quit.",
-        Color::Yellow,
-    );
-    display.print_separator(Color::Blue);
     Ok(())
 }
 
@@ -639,34 +714,3 @@ pub const SETTINGS_MENU_ITEMS: [&str; 6] = [
     "Toggle Debug Mode",
     "Back to Main Menu",
 ];
-
-async fn get_input_with_delay() -> Result<KeyEvent, SharadError> {
-    let mut last_key_time = Instant::now();
-    let delay = Duration::from_millis(50);
-    let mut recent_events = VecDeque::new();
-
-    loop {
-        if let Event::Key(key) = event::read()? {
-            let now = Instant::now();
-            if now.duration_since(last_key_time) > delay {
-                // Check if this event is a duplicate of the previous one
-                if let Some(last_event) = recent_events.back() {
-                    if *last_event == key {
-                        // If it's a duplicate, ignore it
-                        continue;
-                    }
-                }
-
-                // Add this event to our recent events
-                recent_events.push_back(key);
-                if recent_events.len() > 3 {
-                    recent_events.pop_front();
-                }
-
-                last_key_time = now;
-                return Ok(key);
-            }
-        }
-        sleep(Duration::from_millis(10)).await;
-    }
-}

@@ -10,7 +10,7 @@ use tokio::time::{timeout, Duration};
 
 pub async fn generate_and_save_image(prompt: &str) -> Result<(), SharadError> {
     let client = Client::new();
-    let display = Display::new();
+    let mut display = Display::new();
 
     let request = CreateImageRequestArgs::default()
         .prompt(prompt)
@@ -140,7 +140,7 @@ fn build_image_prompt(character_info: &CharacterInfo) -> String {
 
     prompt += &character_info.image_generation_prompt;
 
-    let display = Display::new();
+    let mut display = Display::new();
     display.print_debug(&prompt, Color::Magenta);
     prompt
 }

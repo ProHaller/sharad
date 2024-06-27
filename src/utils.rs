@@ -1,34 +1,103 @@
 use crate::display::Display;
-use crate::Color;
+use crossterm::{
+    cursor,
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    execute, terminal,
+    terminal::ClearType,
+};
 use rand::{self, Rng};
-use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
 use serde::Serialize;
 use std::error::Error;
 use std::fmt;
+use std::io::{self, Write};
+use std::time::Duration;
+use tokio::process::Command;
 
-pub fn correct_input(display: &Display, initial_input: &str) -> Result<String, Box<dyn Error>> {
-    let mut rl = DefaultEditor::new()?;
+pub fn correct_input(
+    _display: &Display,
+    initial_input: &str,
+) -> Result<Option<String>, Box<dyn Error>> {
+    terminal::enable_raw_mode()?;
 
-    // Read the line with the initial input
-    match rl.readline_with_initial(">> ", (initial_input, "")) {
-        Ok(line) => {
-            // Clear the line by moving the cursor up and clearing it
-            // Assuming the terminal supports ANSI escape codes
-            print!("\x1B[1A\x1B[2K"); // Move cursor up and clear the line
-            Ok(line)
-        }
-        Err(ReadlineError::Interrupted) => {
-            display.print_wrapped("Input interrupted. Input 'exit' to exit.", Color::Red);
-            Ok(String::new())
-        }
-        Err(ReadlineError::Eof) => {
-            display.print_wrapped("End of input (Ctrl-D).", Color::Red);
-            Ok(String::new())
-        }
-        Err(err) => {
-            display.print_wrapped(&format!("Error: {:?}", err), Color::Red);
-            Err(Box::new(err))
+    let mut input = String::from(initial_input);
+    let mut cursor_position = input.len();
+
+    loop {
+        // Clear the current line and print the prompt and input
+        execute!(
+            io::stdout(),
+            cursor::MoveToColumn(0),
+            terminal::Clear(ClearType::CurrentLine),
+        )?;
+        print!(">> {}", input);
+
+        // Move the cursor to the correct position
+        execute!(
+            io::stdout(),
+            cursor::MoveToColumn((cursor_position + 3) as u16),
+        )?;
+
+        io::stdout().flush()?;
+
+        // Wait for a key event with a short timeout
+        if event::poll(Duration::from_millis(10))? {
+            if let Event::Key(KeyEvent {
+                code,
+                kind: KeyEventKind::Press,
+                modifiers,
+                ..
+            }) = event::read()?
+            {
+                match code {
+                    KeyCode::Esc => {
+                        terminal::disable_raw_mode()?;
+                        println!(); // Move to the next line
+                        return Ok(None);
+                    }
+                    KeyCode::Enter => {
+                        terminal::disable_raw_mode()?;
+                        println!(); // Move to the next line
+                        return Ok(Some(input));
+                    }
+                    KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Handle paste (Ctrl+V)
+                        if let Ok(clipboard) = cli_clipboard::get_contents() {
+                            input.insert_str(cursor_position, &clipboard);
+                            cursor_position += clipboard.len();
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        input.insert(cursor_position, c);
+                        cursor_position += 1;
+                    }
+                    KeyCode::Backspace => {
+                        if cursor_position > 0 {
+                            input.remove(cursor_position - 1);
+                            cursor_position -= 1;
+                        }
+                    }
+                    KeyCode::Delete => {
+                        if cursor_position < input.len() {
+                            input.remove(cursor_position);
+                        }
+                    }
+                    KeyCode::Left => {
+                        cursor_position = cursor_position.saturating_sub(1);
+                    }
+                    KeyCode::Right => {
+                        if cursor_position < input.len() {
+                            cursor_position += 1;
+                        }
+                    }
+                    KeyCode::Home => {
+                        cursor_position = 0;
+                    }
+                    KeyCode::End => {
+                        cursor_position = input.len();
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -95,4 +164,21 @@ pub fn shadowrun_dice_roll(dice_number: u8, threshold: u8) -> RollResult {
         critical_glitch,
         is_successful,
     }
+}
+
+pub fn open_image(path: &str) -> Result<(), std::io::Error> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd").args(["/C", "start", path]).spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg(path).spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open").arg(path).spawn()?;
+    }
+
+    Ok(())
 }

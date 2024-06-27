@@ -73,7 +73,7 @@ pub async fn generate_and_play_audio(
     Ok(())
 }
 
-pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Box<dyn Error>> {
+pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String, Box<dyn Error>> {
     let settings = crate::settings::load_settings().unwrap_or_default();
     if !settings.audio_input_enabled {
         return Ok(String::new());
@@ -119,7 +119,10 @@ pub async fn record_and_transcribe_audio(display: &Display) -> Result<String, Bo
     }
 }
 
-fn record_audio(file_path: &str, display: &Display) -> Result<String, Box<dyn std::error::Error>> {
+fn record_audio(
+    file_path: &str,
+    display: &mut Display,
+) -> Result<String, Box<dyn std::error::Error>> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()

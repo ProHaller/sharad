@@ -65,14 +65,35 @@ pub fn save_settings(settings: &Settings) -> Result<(), SharadError> {
 
 pub async fn validate_settings(
     settings: &mut Settings,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<(), SharadError> {
     // Validate OpenAI API Key
-    while !is_valid_key(&settings.openai_api_key).await {
+    loop {
+        if is_valid_key(&settings.openai_api_key).await {
+            display.print_wrapped("API Key is valid.", Color::Green);
+            break;
+        }
+
         display.print_wrapped("Invalid or empty API Key", Color::Red);
-        settings.openai_api_key = display.get_user_input("Enter your OpenAI API Key:");
+        match display.get_user_input("Enter your OpenAI API Key (or press Esc to cancel):") {
+            Ok(Some(api_key)) => {
+                if api_key.trim().is_empty() {
+                    display
+                        .print_wrapped("API Key cannot be empty. Please try again.", Color::Yellow);
+                    continue;
+                }
+                settings.openai_api_key = api_key;
+            }
+            Ok(None) => {
+                display.print_wrapped(
+                    "API Key validation cancelled. Exiting settings validation.",
+                    Color::Yellow,
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(SharadError::InputError(e.to_string())),
+        }
     }
-    display.print_wrapped("API Key is valid.", Color::Green);
 
     // Ensure language is not empty
     if settings.language.trim().is_empty() {
@@ -81,9 +102,22 @@ pub async fn validate_settings(
             &format!("Language was empty. Set to default: {}", settings.language),
             Color::Yellow,
         );
+    } else {
+        display.print_wrapped(
+            &format!("Current language: {}", settings.language),
+            Color::Green,
+        );
     }
 
-    save_settings(settings)?;
+    // Save settings
+    match save_settings(settings) {
+        Ok(_) => display.print_wrapped("Settings saved successfully.", Color::Green),
+        Err(e) => {
+            display.print_wrapped(&format!("Failed to save settings: {}", e), Color::Red);
+            return Err(SharadError::Message(e.to_string()));
+        }
+    }
+
     Ok(())
 }
 

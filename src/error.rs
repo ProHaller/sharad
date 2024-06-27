@@ -9,6 +9,8 @@ pub enum SharadError {
     SerdeJson(serde_json::Error),
     Other(String),
     Message(String),
+    InvalidMenuSelection(String),
+    InputError(String),
 }
 
 impl fmt::Display for SharadError {
@@ -19,6 +21,8 @@ impl fmt::Display for SharadError {
             SharadError::SerdeJson(e) => write!(f, "Serde JSON error: {}", e),
             SharadError::Other(e) => write!(f, "Other error: {}", e),
             SharadError::Message(e) => write!(f, "{}", e),
+            SharadError::InvalidMenuSelection(e) => write!(f, "{}", e),
+            SharadError::InputError(e) => write!(f, "{}", e),
         }
     }
 }

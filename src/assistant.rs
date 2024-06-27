@@ -4,7 +4,7 @@ use crate::error::SharadError;
 use crate::image::{generate_character_image, Appearance, CharacterInfo};
 use crate::menu::{choose_assistant, load_game_menu};
 use crate::settings::load_settings;
-use crate::utils::{correct_input, shadowrun_dice_roll};
+use crate::utils::{correct_input, open_image, shadowrun_dice_roll};
 use async_openai::{
     config::OpenAIConfig,
     types::{
@@ -15,13 +15,14 @@ use async_openai::{
     },
     Audio, Client,
 };
-use colored::*;
+use crossterm::style::Color;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::future::Future;
 use std::io::Write;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::spawn;
@@ -39,27 +40,60 @@ pub struct Save {
     pub thread_id: String,
 }
 
-pub fn save_conversation(
+pub async fn save_conversation(
     assistant_id: &str,
     thread_id: &str,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<(), SharadError> {
-    let save_name = display.get_user_input("Enter a name for the save file:");
-    println!();
-    let save_file = format!("{}{}.json", SAVE_DIR, save_name);
+    let save_name = loop {
+        match display.get_user_input("Enter a name for the save file:")? {
+            Some(name) if !name.trim().is_empty() => break name,
+            Some(_) => display.print_wrapped(
+                "Save name cannot be empty. Please try again.",
+                Color::Yellow,
+            ),
+            None => return Ok(()), // User pressed Esc, cancel saving
+        }
+    };
+
+    let save_dir = Path::new(SAVE_DIR);
+    if !save_dir.exists() {
+        fs::create_dir_all(save_dir).map_err(SharadError::Io)?;
+    }
+
+    let save_file = save_dir.join(format!("{}.json", save_name));
+    if save_file.exists() {
+        let confirm = display
+            .get_user_input("A save file with this name already exists. Overwrite? (y/n)")?
+            .map(|s| s.to_lowercase());
+        match confirm.as_deref() {
+            Some("y") | Some("yes") => {}
+            _ => {
+                display.print_wrapped("Save operation cancelled.", Color::Yellow);
+                return Ok(());
+            }
+        }
+    }
+
     let save = Save {
         assistant_id: assistant_id.to_string(),
         thread_id: thread_id.to_string(),
     };
-    let json = serde_json::to_string(&save)?;
-    fs::create_dir_all(SAVE_DIR)?;
-    let mut file = File::create(save_file)?;
-    file.write_all(json.as_bytes())?;
-    display.print_wrapped("Game saved successfully.", Color::Green);
+
+    let json = serde_json::to_string(&save).map_err(SharadError::SerdeJson)?;
+
+    File::create(&save_file)
+        .and_then(|mut file| file.write_all(json.as_bytes()))
+        .map_err(SharadError::Io)?;
+
+    display.print_wrapped(
+        &format!("Game saved successfully as '{}'.", save_name),
+        Color::Green,
+    );
     Ok(())
 }
 
-pub async fn load_conversation_from_file(display: &Display) -> Result<Save, SharadError> {
+pub async fn load_conversation_from_file(display: &mut Display) -> Result<Save, SharadError> {
     match load_game_menu(display).await? {
         Some(save) => Ok(save),
         None => Err(SharadError::Message("Back to main menu.".into())),
@@ -83,7 +117,7 @@ pub async fn list_assistants() -> Result<Vec<(String, String)>, SharadError> {
 pub async fn run_conversation(
     log_file: &mut File,
     is_new_game: bool,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<(), SharadError> {
     let client = Client::new();
     let language = load_settings()?.language;
@@ -116,7 +150,7 @@ pub async fn run_conversation(
                     .create(initial_message)
                     .await?;
 
-                save_conversation(&assistant_id, &thread.id, display)?;
+                let _ = save_conversation(&assistant_id, &thread.id, display).await;
                 (assistant_id, thread.id)
             }
             None => {
@@ -150,7 +184,7 @@ pub async fn run_conversation_with_save(
     assistant_id: &str,
     thread_id: &str,
     is_new_game: bool,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<Value, SharadError> {
     let client = Client::new();
     let audio = Audio::new(&client);
@@ -266,7 +300,7 @@ async fn handle_new_game(
     thread_id: &str,
     assistant_id: &str,
     log_file: &mut File,
-    display: &Display,
+    display: &mut Display,
     audio: &Audio<'_, OpenAIConfig>,
 ) -> Result<(), SharadError> {
     display.print_header("Welcome to the Adventure");
@@ -299,7 +333,7 @@ async fn handle_new_game(
 async fn display_previous_conversation(
     client: &Client<OpenAIConfig>,
     thread_id: &str,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<(), SharadError> {
     display.print_header("Welcome back to the Adventure");
 
@@ -320,7 +354,7 @@ async fn main_conversation_loop(
     thread_id: &str,
     assistant_id: &str,
     log_file: &mut File,
-    display: &Display,
+    display: &mut Display,
     audio: &Audio<'_, OpenAIConfig>,
 ) -> Result<(), SharadError> {
     let pending_tool_outputs = Arc::new(Mutex::new(Vec::new()));
@@ -471,7 +505,7 @@ async fn main_conversation_loop(
                         let tool_call_id = tool_call.id.clone();
                         let tool_call_id_clone = tool_call.id.clone();
                         let pending_tool_outputs_clone = Arc::clone(&pending_tool_outputs);
-                        let display_clone = display.clone();
+                        let mut display_clone = display.clone();
 
                         // Spawn a new task to handle image generation
                         spawn(async move {
@@ -479,8 +513,17 @@ async fn main_conversation_loop(
                                 Ok(image_path) => {
                                     display_clone.print_debug(
                                         &format!("Character image generated: {}", image_path),
-                                        Color::Green,
+                                        Color::Magenta,
                                     );
+
+                                    // Open the generated image
+                                    if let Err(e) = open_image(&image_path) {
+                                        display_clone.print_debug(
+                                            &format!("Failed to open image: {}", e),
+                                            Color::Red,
+                                        );
+                                    }
+
                                     let mut outputs = pending_tool_outputs_clone.lock().await;
                                     outputs.push(ToolsOutputs {
                                         tool_call_id: Some(tool_call_id),
@@ -567,7 +610,7 @@ async fn create_and_wait_for_run(
     client: &Client<OpenAIConfig>,
     thread_id: &str,
     assistant_id: &str,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<RunObject, SharadError> {
     display.print_debug("Debug: Creating run request", Color::Magenta);
     let run_request = CreateRunRequestArgs::default()
@@ -652,7 +695,7 @@ async fn fetch_all_messages(
     Ok(all_messages)
 }
 
-fn display_message(message: &MessageObject, display: &Display) {
+fn display_message(message: &MessageObject, display: &mut Display) {
     let role = match message.role {
         MessageRole::User => "You",
         MessageRole::Assistant => "Game Master",
@@ -696,16 +739,16 @@ fn display_message(message: &MessageObject, display: &Display) {
 }
 
 fn get_user_input(
-    display: &Display,
+    display: &mut Display,
 ) -> Pin<Box<dyn Future<Output = Result<String, SharadError>> + '_>> {
     Box::pin(async move {
         let user_input = record_and_transcribe_audio(display).await?;
-        let corrected_input = correct_input(display, &user_input)?;
-        if corrected_input.trim().is_empty() {
+        if let Some(corrected_input) = correct_input(display, &user_input)? {
+            Ok(corrected_input)
+        } else {
             display.print_wrapped("Input cannot be empty. Please try again.", Color::Red);
-            return get_user_input(display).await;
+            get_user_input(display).await
         }
-        Ok(corrected_input)
     })
 }
 
@@ -749,7 +792,7 @@ fn log_and_display_message(
     log_file: &mut File,
     message: &str,
     sender: &str,
-    display: &Display,
+    display: &mut Display,
 ) -> Result<(), SharadError> {
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let log_entry = format!("[{}] {}: {}\n", timestamp, sender, message);

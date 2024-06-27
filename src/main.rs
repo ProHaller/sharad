@@ -10,10 +10,13 @@ mod utils;
 use crate::display::Display;
 use crate::error::SharadError;
 use chrono::Local;
-use colored::*;
+use crossterm::{
+    execute,
+    style::{Attribute, Color, ResetColor, SetAttribute, SetForegroundColor},
+};
 use menu::main_menu;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{stdout, Write};
 
 use core::cmp::Ordering;
 use rand::Rng;
@@ -59,7 +62,7 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
                     .build()?
                     .update()?;
             }
-            Ordering::Equal => println!("{}", "Current version is up to date.".green()),
+            Ordering::Equal => println!("Current version is up to date."),
             Ordering::Less => rainbow("You're in the future."),
         }
     } else {
@@ -67,8 +70,8 @@ fn check_for_updates() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     println!();
-    let display = Display::new();
-    display.get_user_input("press enter to continue...");
+    let mut display = Display::new();
+    display.get_user_input("press enter to continue...")?;
     Ok(())
 }
 
@@ -85,13 +88,20 @@ fn rainbow(text: &str) {
 
     for c in text.chars() {
         let color = colors[rng.gen_range(0..colors.len())];
-        print!("{}", c.to_string().color(color).bold());
+        let _ = execute!(
+            stdout(),
+            SetForegroundColor(color),
+            SetAttribute(Attribute::Bold)
+        );
+        print!("{}", c);
+        let _ = stdout().flush();
     }
+    let _ = execute!(stdout(), ResetColor);
 }
 
 #[tokio::main]
 async fn main() -> Result<(), SharadError> {
-    let display = Display::new();
+    let mut display = Display::new();
 
     let update_result = tokio::task::spawn_blocking(check_for_updates).await?;
     if let Err(e) = update_result {
