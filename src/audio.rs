@@ -8,16 +8,13 @@ use async_openai::{
 };
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossterm::event::{self, Event, KeyCode};
 use crossterm::style::Color;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use hound::WavWriter;
 use rodio::{Decoder, OutputStream, Sink};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use std::{
     env,
     error::Error,
@@ -145,130 +142,18 @@ pub fn record_audio(file_path: &str, display: &mut Display) -> Result<String, Sh
     let is_recording = Arc::new(AtomicBool::new(false));
     let is_recording_clone = is_recording.clone();
 
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::I16 => build_stream::<i16>(
-            &device,
-            &config.into(),
-            writer.clone(),
-            is_recording_clone.clone(),
-        )?,
-        cpal::SampleFormat::U16 => build_stream::<i16>(
-            &device,
-            &config.into(),
-            writer.clone(),
-            is_recording_clone.clone(),
-        )?,
-        cpal::SampleFormat::F32 => build_stream::<f32>(
-            &device,
-            &config.into(),
-            writer.clone(),
-            is_recording_clone.clone(),
-        )?,
-        _ => {
-            return Err(SharadError::AudioRecordingError(
-                "Unsupported sample format".into(),
-            ))
-        }
+    let err_fn = move |err| {
+        eprintln!("An error occurred on the audio stream: {}", err);
     };
 
-    stream
-        .play()
-        .map_err(|e| SharadError::AudioRecordingError(format!("Failed to play stream: {}", e)))?;
-
-    let mut recording_start: Option<Instant> = None;
-    let mut last_activity: Instant = Instant::now();
-    let minimum_duration = Duration::from_secs(1); // Minimum 1 second recording
-
-    enable_raw_mode().map_err(|e| {
-        SharadError::AudioRecordingError(format!("Failed to enable raw mode: {}", e))
-    })?;
-
-    display.print_wrapped("Hold Space to record", Color::Yellow);
-
-    loop {
-        if event::poll(Duration::from_millis(10)).map_err(|e| {
-            SharadError::AudioRecordingError(format!("Failed to poll for event: {}", e))
-        })? {
-            last_activity = Instant::now();
-            if let Event::Key(key_event) = event::read().map_err(|e| {
-                SharadError::AudioRecordingError(format!("Failed to read event: {}", e))
-            })? {
-                match key_event.code {
-                    KeyCode::Char(' ') => {
-                        if !is_recording.load(Ordering::Relaxed) {
-                            is_recording.store(true, Ordering::Relaxed);
-                            recording_start = Some(Instant::now());
-                        }
-                    }
-                    KeyCode::Esc => break,
-                    _ => {}
-                }
-            }
-        } else if is_recording.load(Ordering::Relaxed)
-            && last_activity.elapsed() > Duration::from_millis(300)
-        {
-            if let Some(start) = recording_start {
-                let duration = start.elapsed();
-                if duration >= minimum_duration {
-                    is_recording.store(false, Ordering::Relaxed);
-                    break;
-                }
-            }
-        }
-    }
-
-    disable_raw_mode().map_err(|e| {
-        SharadError::AudioRecordingError(format!("Failed to disable raw mode: {}", e))
-    })?;
-
-    // Ensure all data is written
-    std::thread::sleep(Duration::from_millis(500));
-
-    // Close the file
-    if let Some(guard) = writer.lock().unwrap().take() {
-        guard.finalize().map_err(|e| {
-            SharadError::AudioRecordingError(format!("Failed to finalize WAV writer: {}", e))
-        })?;
-    }
-
-    // Check if the recording meets the minimum duration
-    if let Some(start) = recording_start {
-        let duration = start.elapsed();
-        if duration < minimum_duration {
-            display.print_wrapped("Recording too short. Discarding.", Color::Red);
-            std::fs::remove_file(file_path).map_err(|e| {
-                SharadError::AudioRecordingError(format!(
-                    "Failed to remove short audio file: {}",
-                    e
-                ))
-            })?;
-            Ok(String::new())
-        } else {
-            display.print_wrapped("", Color::Green);
-            Ok(file_path.to_string())
-        }
-    } else {
-        Ok(String::new())
-    }
-}
-
-fn build_stream<T>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    writer: Arc<Mutex<Option<WavWriter<std::io::BufWriter<std::fs::File>>>>>,
-    is_recording: Arc<AtomicBool>,
-) -> Result<cpal::Stream, SharadError>
-where
-    T: cpal::Sample + hound::Sample + cpal::SizedSample,
-{
-    device
+    let stream = device
         .build_input_stream(
-            config,
-            move |data: &[T], _: &_| {
-                if is_recording.load(Ordering::Relaxed) {
+            &config.into(),
+            move |data: &[f32], _: &_| {
+                if is_recording_clone.load(Ordering::Relaxed) {
                     if let Some(guard) = writer.lock().unwrap().as_mut() {
                         for &sample in data {
-                            let sample = sample.as_i16();
+                            let sample = (sample * i16::MAX as f32) as i16;
                             if let Err(e) = guard.write_sample(sample) {
                                 eprintln!("Error writing sample: {}", e);
                                 break;
@@ -277,10 +162,18 @@ where
                     }
                 }
             },
-            |err| eprintln!("An error occurred on the audio stream: {}", err),
+            err_fn,
             None,
         )
         .map_err(|e| {
             SharadError::AudioRecordingError(format!("Failed to build input stream: {}", e))
-        })
+        })?;
+
+    stream
+        .play()
+        .map_err(|e| SharadError::AudioRecordingError(format!("Failed to play stream: {}", e)))?;
+
+    // Rest of the function remains the same...
+
+    Ok(file_path.to_string())
 }

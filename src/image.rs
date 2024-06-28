@@ -1,5 +1,6 @@
 use crate::display::Display;
 use crate::error::SharadError;
+use crate::utils::open_image;
 use crate::Color;
 use async_openai::{
     types::{CreateImageRequestArgs, ImageModel, ImageSize, ResponseFormat},
@@ -43,7 +44,34 @@ pub async fn generate_and_save_image(prompt: &str) -> Result<(), SharadError> {
         )
     });
 
-    Ok(())
+    if let Some(path) = paths.first() {
+        handle_generated_image(path.to_str().unwrap(), &mut display).await?;
+        Ok(())
+    } else {
+        Err(SharadError::Other("No image file path received.".into()))
+    }
+}
+
+pub async fn handle_generated_image(
+    image_path: &str,
+    display: &mut Display,
+) -> Result<(), SharadError> {
+    // Log the image path
+    display.print_debug(&format!("Image generated: {}", image_path), Color::Magenta);
+
+    // Attempt to open the image
+    match open_image(image_path) {
+        Ok(_) => {
+            display.print_wrapped("Image opened successfully.", Color::Green);
+            Ok(())
+        }
+        Err(e) => {
+            display.print_wrapped(&format!("Failed to open image: {}", e), Color::Yellow);
+            // We're not returning an error here, as failing to open the image
+            // shouldn't be considered a critical error
+            Ok(())
+        }
+    }
 }
 
 pub async fn generate_character_image(
@@ -78,6 +106,7 @@ pub async fn generate_character_image(
     let paths = response.save("./data/logs").await?;
 
     if let Some(path) = paths.first() {
+        let _ = handle_generated_image(path.to_str().unwrap(), &mut Display::new()).await;
         Ok(path.display().to_string())
     } else {
         Err("No image file path received.".into())

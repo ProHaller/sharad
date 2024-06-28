@@ -19,7 +19,7 @@ pub fn correct_input(
 ) -> Result<Option<String>, Box<dyn Error>> {
     terminal::enable_raw_mode()?;
 
-    let mut input = String::from(initial_input);
+    let mut input: Vec<char> = initial_input.chars().collect();
     let mut cursor_position = input.len();
 
     loop {
@@ -29,7 +29,7 @@ pub fn correct_input(
             cursor::MoveToColumn(0),
             terminal::Clear(ClearType::CurrentLine),
         )?;
-        print!(">> {}", input);
+        print!(">> {}", input.iter().collect::<String>());
 
         // Move the cursor to the correct position
         execute!(
@@ -57,13 +57,15 @@ pub fn correct_input(
                     KeyCode::Enter => {
                         terminal::disable_raw_mode()?;
                         println!(); // Move to the next line
-                        return Ok(Some(input));
+                        return Ok(Some(input.iter().collect()));
                     }
                     KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
                         // Handle paste (Ctrl+V)
                         if let Ok(clipboard) = cli_clipboard::get_contents() {
-                            input.insert_str(cursor_position, &clipboard);
-                            cursor_position += clipboard.len();
+                            for c in clipboard.chars() {
+                                input.insert(cursor_position, c);
+                                cursor_position += 1;
+                            }
                         }
                     }
                     KeyCode::Char(c) => {

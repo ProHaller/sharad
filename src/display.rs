@@ -66,12 +66,19 @@ impl Display {
         execute!(io::stdout(), ResetColor)?;
         io::stdout().flush()?;
 
-        let mut input = String::new();
+        let mut input: Vec<char> = Vec::new();
         let mut cursor_position = 0;
 
         let mut clipboard = ClipboardContext::new().unwrap();
 
-        let result = loop {
+        loop {
+            self.redraw_input(
+                &input.iter().collect::<String>(),
+                cursor_position,
+                prompt_y,
+                prompt_lines,
+            )?;
+
             if event::poll(Duration::from_millis(10))? {
                 if let Event::Key(KeyEvent {
                     code,
@@ -81,54 +88,56 @@ impl Display {
                 }) = event::read()?
                 {
                     match code {
-                        KeyCode::Esc => break None,
-                        KeyCode::Enter => break Some(input.trim().to_string()),
-                        KeyCode::Char(c) if modifiers == KeyModifiers::CONTROL && c == 'v' => {
+                        KeyCode::Esc => {
+                            terminal::disable_raw_mode()?;
+                            return Ok(None);
+                        }
+                        KeyCode::Enter => {
+                            terminal::disable_raw_mode()?;
+                            return Ok(Some(input.iter().collect::<String>().trim().to_string()));
+                        }
+                        KeyCode::Char('v') if modifiers == KeyModifiers::CONTROL => {
                             if let Ok(clipboard_contents) = clipboard.get_contents() {
-                                input.push_str(&clipboard_contents);
-                                cursor_position += clipboard_contents.len();
-                                self.redraw_input(&input, cursor_position, prompt_y, prompt_lines)?;
+                                for c in clipboard_contents.chars() {
+                                    input.insert(cursor_position, c);
+                                    cursor_position += 1;
+                                }
                             }
                         }
                         KeyCode::Char(c) => {
                             input.insert(cursor_position, c);
                             cursor_position += 1;
-                            self.redraw_input(&input, cursor_position, prompt_y, prompt_lines)?;
                         }
                         KeyCode::Backspace => {
                             if cursor_position > 0 {
                                 input.remove(cursor_position - 1);
                                 cursor_position -= 1;
-                                self.redraw_input(&input, cursor_position, prompt_y, prompt_lines)?;
+                            }
+                        }
+                        KeyCode::Delete => {
+                            if cursor_position < input.len() {
+                                input.remove(cursor_position);
                             }
                         }
                         KeyCode::Left => {
-                            if cursor_position > 0 {
-                                cursor_position -= 1;
-                                self.move_cursor(cursor_position, prompt_y, prompt_lines)?;
-                            }
+                            cursor_position = cursor_position.saturating_sub(1);
                         }
                         KeyCode::Right => {
                             if cursor_position < input.len() {
                                 cursor_position += 1;
-                                self.move_cursor(cursor_position, prompt_y, prompt_lines)?;
                             }
+                        }
+                        KeyCode::Home => {
+                            cursor_position = 0;
+                        }
+                        KeyCode::End => {
+                            cursor_position = input.len();
                         }
                         _ => {}
                     }
                 }
             }
-        };
-
-        execute!(
-            io::stdout(),
-            cursor::MoveTo(0, prompt_y + prompt_lines as u16),
-            Clear(ClearType::FromCursorDown)
-        )?;
-
-        terminal::disable_raw_mode()?;
-
-        Ok(result)
+        }
     }
 
     fn redraw_input(
