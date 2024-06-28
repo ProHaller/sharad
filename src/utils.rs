@@ -29,12 +29,12 @@ pub fn correct_input(
             cursor::MoveToColumn(0),
             terminal::Clear(ClearType::CurrentLine),
         )?;
-        print!(">> {}", input.iter().collect::<String>());
+        print!("  >> {}", input.iter().collect::<String>());
 
         // Move the cursor to the correct position
         execute!(
             io::stdout(),
-            cursor::MoveToColumn((cursor_position + 3) as u16),
+            cursor::MoveToColumn((cursor_position + 5) as u16),
         )?;
 
         io::stdout().flush()?;

@@ -96,7 +96,6 @@ pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String
     let audio = Audio::new(&client);
 
     println!();
-    display.print_wrapped("Transcribing audio", Color::Yellow);
     display.print_thinking_dot();
 
     match audio

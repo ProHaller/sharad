@@ -28,10 +28,8 @@ pub const MAIN_MENU_ITEMS: [&str; 5] = [
     "Exit",
 ];
 
-const ART_HEIGHT: u16 = 35;
+const ART_HEIGHT: u16 = 37;
 pub const ART: &str = r#"
-
-
 
 
 
@@ -127,7 +125,9 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
     }
 
     terminal::disable_raw_mode()?;
+    println!();
     display.print_footer("Thank you for playing Sharad!");
+    println!();
     Ok(())
 }
 

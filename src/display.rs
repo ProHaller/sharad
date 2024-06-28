@@ -46,7 +46,7 @@ impl Display {
             .collect();
         let prompt_lines = wrapped_prompt.len();
 
-        let prompt_y = self.ensure_space_for_lines(prompt_lines + 2);
+        let prompt_y = self.ensure_space_for_lines(prompt_lines);
 
         for (i, line) in wrapped_prompt.iter().enumerate() {
             execute!(
@@ -169,27 +169,9 @@ impl Display {
         )
     }
 
-    pub fn print_thinking(&mut self) {
-        let (_, cursor_y) = self.get_current_cursor_position();
-        if execute!(
-            stdout(),
-            cursor::MoveTo(0, cursor_y),
-            SetForegroundColor(Color::Yellow)
-        )
-        .is_ok()
-        {
-            print!("\nThinking");
-            let _ = execute!(stdout(), ResetColor);
-            let _ = stdout().flush();
-        }
-    }
-
     pub fn print_thinking_dot(&mut self) {
-        if execute!(stdout(), SetForegroundColor(Color::Yellow)).is_ok() {
-            print!(".");
-            let _ = execute!(stdout(), ResetColor);
-            let _ = stdout().flush();
-        }
+        self.print_centered(".", Color::Yellow);
+        let _ = stdout().flush();
     }
 
     pub fn clear_thinking(&self) {
@@ -250,14 +232,14 @@ impl Display {
     pub fn print_header(&mut self, text: &str) {
         self.update_dimensions();
         self.print_separator(Color::Yellow);
-        self.print_centered(text, Color::Cyan);
+        self.print_centered(&format!("\n{}\n", text), Color::Cyan);
         self.print_separator(Color::Yellow);
     }
 
     pub fn print_footer(&mut self, text: &str) {
         self.update_dimensions();
         self.print_separator(Color::Yellow);
-        self.print_centered(text, Color::Cyan);
+        self.print_centered(&format!("\n{}\n", text), Color::Cyan);
         self.print_separator(Color::Yellow);
     }
 

@@ -624,7 +624,6 @@ async fn create_and_wait_for_run(
         Color::Magenta,
     );
 
-    display.print_thinking();
     let mut iterations = 0;
     let max_iterations = 100; // Set a reasonable maximum number of iterations
 
