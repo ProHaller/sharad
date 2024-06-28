@@ -11,6 +11,7 @@ pub enum SharadError {
     Message(String),
     InvalidMenuSelection(String),
     InputError(String),
+    AudioRecordingError(String),
 }
 
 impl fmt::Display for SharadError {
@@ -23,6 +24,7 @@ impl fmt::Display for SharadError {
             SharadError::Message(e) => write!(f, "{}", e),
             SharadError::InvalidMenuSelection(e) => write!(f, "{}", e),
             SharadError::InputError(e) => write!(f, "{}", e),
+            SharadError::AudioRecordingError(e) => write!(f, "{}", e),
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::display::Display;
-use crate::Color;
+use crate::error::SharadError;
 use async_openai::error::OpenAIError;
 use async_openai::{
     config::OpenAIConfig,
@@ -8,15 +8,16 @@ use async_openai::{
 };
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossterm::event::{poll, read, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode};
+use crossterm::style::Color;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use hound::WavWriter;
 use rodio::{Decoder, OutputStream, Sink};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{
     env,
     error::Error,
@@ -119,17 +120,14 @@ pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String
     }
 }
 
-fn record_audio(
-    file_path: &str,
-    display: &mut Display,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub fn record_audio(file_path: &str, display: &mut Display) -> Result<String, SharadError> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
-        .expect("no input device available");
-    let config = device
-        .default_input_config()
-        .expect("no default input config");
+        .ok_or_else(|| SharadError::AudioRecordingError("No input device available".into()))?;
+    let config = device.default_input_config().map_err(|e| {
+        SharadError::AudioRecordingError(format!("Failed to get default input config: {}", e))
+    })?;
 
     let spec = hound::WavSpec {
         channels: config.channels() as u16,
@@ -138,83 +136,63 @@ fn record_audio(
         sample_format: hound::SampleFormat::Int,
     };
 
-    let writer = Arc::new(Mutex::new(Some(hound::WavWriter::create(file_path, spec)?)));
+    let writer = Arc::new(Mutex::new(Some(
+        WavWriter::create(file_path, spec).map_err(|e| {
+            SharadError::AudioRecordingError(format!("Failed to create WAV writer: {}", e))
+        })?,
+    )));
 
     let is_recording = Arc::new(AtomicBool::new(false));
     let is_recording_clone = is_recording.clone();
 
     let stream = match config.sample_format() {
-        cpal::SampleFormat::I16 => {
-            let writer_clone = Arc::clone(&writer);
-            device.build_input_stream(
-                &config.into(),
-                move |data: &[i16], _: &_| {
-                    if is_recording_clone.load(Ordering::Relaxed) {
-                        if let Some(guard) = writer_clone.lock().unwrap().as_mut() {
-                            for &sample in data {
-                                guard.write_sample(sample).unwrap();
-                            }
-                        }
-                    }
-                },
-                err_fn,
-                None,
-            )?
+        cpal::SampleFormat::I16 => build_stream::<i16>(
+            &device,
+            &config.into(),
+            writer.clone(),
+            is_recording_clone.clone(),
+        )?,
+        cpal::SampleFormat::U16 => build_stream::<i16>(
+            &device,
+            &config.into(),
+            writer.clone(),
+            is_recording_clone.clone(),
+        )?,
+        cpal::SampleFormat::F32 => build_stream::<f32>(
+            &device,
+            &config.into(),
+            writer.clone(),
+            is_recording_clone.clone(),
+        )?,
+        _ => {
+            return Err(SharadError::AudioRecordingError(
+                "Unsupported sample format".into(),
+            ))
         }
-        cpal::SampleFormat::U16 => {
-            let writer_clone = Arc::clone(&writer);
-            device.build_input_stream(
-                &config.into(),
-                move |data: &[u16], _: &_| {
-                    if is_recording_clone.load(Ordering::Relaxed) {
-                        if let Some(guard) = writer_clone.lock().unwrap().as_mut() {
-                            for &sample in data {
-                                let sample_i16 = sample.wrapping_sub(32768) as i16;
-                                guard.write_sample(sample_i16).unwrap();
-                            }
-                        }
-                    }
-                },
-                err_fn,
-                None,
-            )?
-        }
-        cpal::SampleFormat::F32 => {
-            let writer_clone = Arc::clone(&writer);
-            device.build_input_stream(
-                &config.into(),
-                move |data: &[f32], _: &_| {
-                    if is_recording_clone.load(Ordering::Relaxed) {
-                        if let Some(guard) = writer_clone.lock().unwrap().as_mut() {
-                            for &sample in data {
-                                guard
-                                    .write_sample((sample * i16::MAX as f32) as i16)
-                                    .unwrap();
-                            }
-                        }
-                    }
-                },
-                err_fn,
-                None,
-            )?
-        }
-        _ => return Err("Unsupported sample format".into()),
     };
 
-    stream.play()?;
+    stream
+        .play()
+        .map_err(|e| SharadError::AudioRecordingError(format!("Failed to play stream: {}", e)))?;
 
     let mut recording_start: Option<Instant> = None;
     let mut last_activity: Instant = Instant::now();
     let minimum_duration = Duration::from_secs(1); // Minimum 1 second recording
 
-    enable_raw_mode()?;
+    enable_raw_mode().map_err(|e| {
+        SharadError::AudioRecordingError(format!("Failed to enable raw mode: {}", e))
+    })?;
 
     display.print_wrapped("Hold Space to record", Color::Yellow);
 
     loop {
-        if poll(Duration::from_millis(10))? {
+        if event::poll(Duration::from_millis(10)).map_err(|e| {
+            SharadError::AudioRecordingError(format!("Failed to poll for event: {}", e))
+        })? {
             last_activity = Instant::now();
-            if let Event::Key(key_event) = read()? {
+            if let Event::Key(key_event) = event::read().map_err(|e| {
+                SharadError::AudioRecordingError(format!("Failed to read event: {}", e))
+            })? {
                 match key_event.code {
                     KeyCode::Char(' ') => {
                         if !is_recording.load(Ordering::Relaxed) {
@@ -239,15 +217,18 @@ fn record_audio(
         }
     }
 
-    // Disable raw mode
-    disable_raw_mode()?;
+    disable_raw_mode().map_err(|e| {
+        SharadError::AudioRecordingError(format!("Failed to disable raw mode: {}", e))
+    })?;
 
     // Ensure all data is written
     std::thread::sleep(Duration::from_millis(500));
 
     // Close the file
     if let Some(guard) = writer.lock().unwrap().take() {
-        guard.finalize()?;
+        guard.finalize().map_err(|e| {
+            SharadError::AudioRecordingError(format!("Failed to finalize WAV writer: {}", e))
+        })?;
     }
 
     // Check if the recording meets the minimum duration
@@ -255,7 +236,12 @@ fn record_audio(
         let duration = start.elapsed();
         if duration < minimum_duration {
             display.print_wrapped("Recording too short. Discarding.", Color::Red);
-            std::fs::remove_file(file_path)?;
+            std::fs::remove_file(file_path).map_err(|e| {
+                SharadError::AudioRecordingError(format!(
+                    "Failed to remove short audio file: {}",
+                    e
+                ))
+            })?;
             Ok(String::new())
         } else {
             display.print_wrapped("", Color::Green);
@@ -266,6 +252,35 @@ fn record_audio(
     }
 }
 
-fn err_fn(err: cpal::StreamError) {
-    eprintln!("An error occurred on stream: {}", err);
+fn build_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    writer: Arc<Mutex<Option<WavWriter<std::io::BufWriter<std::fs::File>>>>>,
+    is_recording: Arc<AtomicBool>,
+) -> Result<cpal::Stream, SharadError>
+where
+    T: cpal::Sample + hound::Sample + cpal::SizedSample,
+{
+    device
+        .build_input_stream(
+            config,
+            move |data: &[T], _: &_| {
+                if is_recording.load(Ordering::Relaxed) {
+                    if let Some(guard) = writer.lock().unwrap().as_mut() {
+                        for &sample in data {
+                            let sample = sample.as_i16();
+                            if let Err(e) = guard.write_sample(sample) {
+                                eprintln!("Error writing sample: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+            },
+            |err| eprintln!("An error occurred on the audio stream: {}", err),
+            None,
+        )
+        .map_err(|e| {
+            SharadError::AudioRecordingError(format!("Failed to build input stream: {}", e))
+        })
 }
