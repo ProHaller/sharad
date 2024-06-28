@@ -102,7 +102,11 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
                         break;
                     }
                     KeyCode::Char(c) => {
-                        if let Some(index) = c.to_digit(10).map(|d| d as usize - 1) {
+                        if let Some(index) = c
+                            .to_digit(10)
+                            .and_then(|d| d.checked_sub(1))
+                            .map(|d| d as usize)
+                        {
                             if index < menu_items_count
                                 && handle_main_menu_selection(
                                     &mut log_file,
@@ -160,11 +164,12 @@ pub async fn change_settings(
                         break;
                     }
                     KeyCode::Char(c) => {
-                        if let Some(index) = c.to_digit(10).map(|d| d as usize - 1) {
-                            if index < menu_items_count
-                                && handle_settings_selection(settings, display, index).await?
-                            {
-                                break;
+                        if let Some(digit) = c.to_digit(10) {
+                            if digit > 0 && digit <= menu_items_count as u32 {
+                                let index = (digit - 1) as usize;
+                                if handle_settings_selection(settings, display, index).await? {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -523,14 +528,16 @@ pub async fn choose_assistant(
                         return Ok(None);
                     }
                     KeyCode::Char(c) => {
-                        if c >= '1' && c <= (menu_items_count as u8 + b'0') as char {
-                            let index = c as usize - '1' as usize;
-                            terminal::disable_raw_mode()?;
-                            return if index == menu_items_count - 1 {
-                                Ok(None)
-                            } else {
-                                Ok(Some(assistants[index].0.clone()))
-                            };
+                        if let Some(digit) = c.to_digit(10) {
+                            if digit > 0 && digit <= menu_items_count as u32 {
+                                let index = (digit - 1) as usize;
+                                terminal::disable_raw_mode()?;
+                                return if index == menu_items_count - 1 {
+                                    Ok(None)
+                                } else {
+                                    Ok(Some(assistants[index].0.clone()))
+                                };
+                            }
                         }
                     }
                     _ => {}
@@ -598,12 +605,15 @@ pub async fn load_game_menu(display: &mut Display) -> Result<Option<Save>, Shara
                         terminal::disable_raw_mode()?;
                         return Ok(None);
                     }
-                    KeyCode::Char(c)
-                        if c >= '1' && c <= (menu_items_count as u8 + b'0') as char =>
-                    {
-                        let index = c as usize - '1' as usize;
-                        terminal::disable_raw_mode()?;
-                        return handle_load_game_selection(save_dir, &menu_items, index).await;
+                    KeyCode::Char(c) => {
+                        if let Some(index) = c
+                            .to_digit(10)
+                            .and_then(|d| (d as usize).checked_sub(1))
+                            .filter(|&i| i < menu_items_count)
+                        {
+                            terminal::disable_raw_mode()?;
+                            return handle_load_game_selection(save_dir, &menu_items, index).await;
+                        }
                     }
                     _ => {}
                 }
