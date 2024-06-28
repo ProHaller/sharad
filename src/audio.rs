@@ -1,5 +1,6 @@
 use crate::display::Display;
 use crate::error::SharadError;
+use crate::Color;
 use async_openai::error::OpenAIError;
 use async_openai::{
     config::OpenAIConfig,
@@ -8,16 +9,17 @@ use async_openai::{
 };
 use chrono::Local;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossterm::style::Color;
-use hound::WavWriter;
+use crossterm::event::{poll, read, Event, KeyCode};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use rodio::{Decoder, OutputStream, Sink};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::time::Instant;
 use std::{
     env,
-    error::Error,
     fs::{self},
     path::Path,
 };
@@ -27,8 +29,8 @@ pub async fn generate_and_play_audio(
     audio: &Audio<'_, OpenAIConfig>,
     text: &str,
     role: &str,
-) -> Result<(), Box<dyn Error>> {
-    let settings = crate::settings::load_settings().unwrap_or_default();
+) -> Result<(), SharadError> {
+    let settings = crate::settings::load_settings()?;
     if !settings.audio_output_enabled {
         return Ok(());
     }
@@ -46,33 +48,39 @@ pub async fn generate_and_play_audio(
                 .voice(voice)
                 .model(SpeechModel::Tts1)
                 .speed(1.2)
-                .build()?,
+                .build()
+                .map_err(SharadError::OpenAI)?,
         )
-        .await?;
+        .await
+        .map_err(SharadError::OpenAI)?;
     let file_name = format!("{}_{}.mp3", role, Local::now().format("%Y%m%d_%H%M%S"));
     let file_path = Path::new("./data/logs").join(file_name);
-    fs::create_dir_all("./data/logs")?;
-    response.save(file_path.to_str().unwrap()).await?;
+    fs::create_dir_all("./data/logs").map_err(SharadError::Io)?;
+    response
+        .save(file_path.to_str().unwrap())
+        .await
+        .map_err(SharadError::OpenAI)?;
 
     task::spawn_blocking(move || {
-        let (_stream, stream_handle) =
-            OutputStream::try_default().expect("Failed to get default output stream");
-        let sink = Sink::try_new(&stream_handle).expect("Failed to create audio sink");
-        sink.append(
-            Decoder::new(BufReader::new(
-                File::open(file_path).expect("Failed to open audio file"),
-            ))
-            .expect("Failed to decode audio file"),
-        );
+        let (_stream, stream_handle) = OutputStream::try_default()
+            .map_err(|e| SharadError::AudioPlaybackError(e.to_string()))?;
+        let sink = Sink::try_new(&stream_handle)
+            .map_err(|e| SharadError::AudioPlaybackError(e.to_string()))?;
+        let file = File::open(file_path).map_err(SharadError::Io)?;
+        let source = Decoder::new(BufReader::new(file))
+            .map_err(|e| SharadError::AudioPlaybackError(e.to_string()))?;
+        sink.append(source);
         sink.sleep_until_end();
+        Ok::<(), SharadError>(())
     })
-    .await?;
+    .await
+    .map_err(|e| SharadError::AudioPlaybackError(e.to_string()))??;
 
     Ok(())
 }
 
-pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String, Box<dyn Error>> {
-    let settings = crate::settings::load_settings().unwrap_or_default();
+pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String, SharadError> {
+    let settings = crate::settings::load_settings()?;
     if !settings.audio_input_enabled {
         return Ok(String::new());
     }
@@ -82,8 +90,9 @@ pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String
     );
     record_audio(&recording_path, display)?;
 
-    let client =
-        Client::with_config(OpenAIConfig::default().with_api_key(env::var("OPENAI_API_KEY")?));
+    let client = Client::with_config(OpenAIConfig::default().with_api_key(
+        env::var("OPENAI_API_KEY").map_err(|_| SharadError::MissingAPIKey("OpenAI".into()))?,
+    ));
     let audio = Audio::new(&client);
 
     println!();
@@ -95,7 +104,8 @@ pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String
             CreateTranscriptionRequestArgs::default()
                 .file(&recording_path)
                 .model("whisper-1")
-                .build()?,
+                .build()
+                .map_err(SharadError::OpenAI)?,
         )
         .await
     {
@@ -112,19 +122,19 @@ pub async fn record_and_transcribe_audio(display: &mut Display) -> Result<String
                     return Ok(String::new());
                 }
             }
-            Err(e.into())
+            Err(SharadError::OpenAI(e))
         }
     }
 }
 
-pub fn record_audio(file_path: &str, display: &mut Display) -> Result<String, SharadError> {
+fn record_audio(file_path: &str, display: &mut Display) -> Result<String, SharadError> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or_else(|| SharadError::AudioRecordingError("No input device available".into()))?;
-    let config = device.default_input_config().map_err(|e| {
-        SharadError::AudioRecordingError(format!("Failed to get default input config: {}", e))
-    })?;
+    let config = device
+        .default_input_config()
+        .map_err(|e| SharadError::AudioRecordingError(e.to_string()))?;
 
     let spec = hound::WavSpec {
         channels: config.channels() as u16,
@@ -134,46 +144,148 @@ pub fn record_audio(file_path: &str, display: &mut Display) -> Result<String, Sh
     };
 
     let writer = Arc::new(Mutex::new(Some(
-        WavWriter::create(file_path, spec).map_err(|e| {
-            SharadError::AudioRecordingError(format!("Failed to create WAV writer: {}", e))
-        })?,
+        hound::WavWriter::create(file_path, spec).map_err(SharadError::Hound)?,
     )));
 
     let is_recording = Arc::new(AtomicBool::new(false));
     let is_recording_clone = is_recording.clone();
 
-    let err_fn = move |err| {
-        eprintln!("An error occurred on the audio stream: {}", err);
-    };
-
-    let stream = device
-        .build_input_stream(
-            &config.into(),
-            move |data: &[f32], _: &_| {
-                if is_recording_clone.load(Ordering::Relaxed) {
-                    if let Some(guard) = writer.lock().unwrap().as_mut() {
-                        for &sample in data {
-                            let sample = (sample * i16::MAX as f32) as i16;
-                            if let Err(e) = guard.write_sample(sample) {
-                                eprintln!("Error writing sample: {}", e);
-                                break;
+    let stream = match config.sample_format() {
+        cpal::SampleFormat::I16 => {
+            let writer_clone = Arc::clone(&writer);
+            device.build_input_stream(
+                &config.into(),
+                move |data: &[i16], _: &_| {
+                    if is_recording_clone.load(Ordering::Relaxed) {
+                        if let Some(guard) = writer_clone.lock().unwrap().as_mut() {
+                            for &sample in data {
+                                if let Err(e) = guard.write_sample(sample) {
+                                    eprintln!("Error writing sample: {}", e);
+                                }
                             }
                         }
                     }
-                }
-            },
-            err_fn,
-            None,
-        )
-        .map_err(|e| {
-            SharadError::AudioRecordingError(format!("Failed to build input stream: {}", e))
-        })?;
+                },
+                err_fn,
+                None,
+            )
+        }
+        cpal::SampleFormat::U16 => {
+            let writer_clone = Arc::clone(&writer);
+            device.build_input_stream(
+                &config.into(),
+                move |data: &[u16], _: &_| {
+                    if is_recording_clone.load(Ordering::Relaxed) {
+                        if let Some(guard) = writer_clone.lock().unwrap().as_mut() {
+                            for &sample in data {
+                                let sample_i16 = sample.wrapping_sub(32768) as i16;
+                                if let Err(e) = guard.write_sample(sample_i16) {
+                                    eprintln!("Error writing sample: {}", e);
+                                }
+                            }
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            )
+        }
+        cpal::SampleFormat::F32 => {
+            let writer_clone = Arc::clone(&writer);
+            device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &_| {
+                    if is_recording_clone.load(Ordering::Relaxed) {
+                        if let Some(guard) = writer_clone.lock().unwrap().as_mut() {
+                            for &sample in data {
+                                let sample_i16 = (sample * i16::MAX as f32) as i16;
+                                if let Err(e) = guard.write_sample(sample_i16) {
+                                    eprintln!("Error writing sample: {}", e);
+                                }
+                            }
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            )
+        }
+        _ => {
+            return Err(SharadError::AudioRecordingError(
+                "Unsupported sample format".into(),
+            ))
+        }
+    }
+    .map_err(|e| SharadError::AudioRecordingError(e.to_string()))?;
 
     stream
         .play()
-        .map_err(|e| SharadError::AudioRecordingError(format!("Failed to play stream: {}", e)))?;
+        .map_err(|e| SharadError::AudioRecordingError(e.to_string()))?;
 
-    // Rest of the function remains the same...
+    let mut recording_start: Option<Instant> = None;
+    let mut last_activity: Instant = Instant::now();
+    let minimum_duration = Duration::from_secs(1); // Minimum 1 second recording
 
-    Ok(file_path.to_string())
+    enable_raw_mode().map_err(SharadError::Io)?;
+
+    display.print_wrapped("Hold Space to record", Color::Yellow);
+
+    loop {
+        if poll(Duration::from_millis(10)).map_err(SharadError::Io)? {
+            last_activity = Instant::now();
+            if let Event::Key(key_event) = read().map_err(SharadError::Io)? {
+                match key_event.code {
+                    KeyCode::Char(' ') => {
+                        if !is_recording.load(Ordering::Relaxed) {
+                            is_recording.store(true, Ordering::Relaxed);
+                            recording_start = Some(Instant::now());
+                        }
+                    }
+                    KeyCode::Esc => break,
+                    _ => {}
+                }
+            }
+        } else if is_recording.load(Ordering::Relaxed)
+            && last_activity.elapsed() > Duration::from_millis(300)
+        {
+            if let Some(start) = recording_start {
+                let duration = start.elapsed();
+                if duration >= minimum_duration {
+                    is_recording.store(false, Ordering::Relaxed);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Disable raw mode
+    disable_raw_mode().map_err(SharadError::Io)?;
+
+    // Ensure all data is written
+    std::thread::sleep(Duration::from_millis(500));
+
+    if let Some(guard) = writer.lock().unwrap().take() {
+        guard.finalize().map_err(SharadError::Hound)?;
+    }
+
+    // Check if the recording meets the minimum duration
+    if let Some(start) = recording_start {
+        let duration = start.elapsed();
+        if duration < minimum_duration {
+            display.print_wrapped("Recording too short. Discarding.", Color::Red);
+            std::fs::remove_file(file_path).map_err(SharadError::Io)?;
+            Err(SharadError::AudioRecordingError(
+                "Recording too short".into(),
+            ))
+        } else {
+            display.print_wrapped("", Color::Green);
+            Ok(file_path.to_string())
+        }
+    } else {
+        Ok(String::new())
+    }
+}
+
+fn err_fn(err: cpal::StreamError) {
+    eprintln!("An error occurred on stream: {}", err);
 }

@@ -12,6 +12,9 @@ pub enum SharadError {
     InvalidMenuSelection(String),
     InputError(String),
     AudioRecordingError(String),
+    AudioPlaybackError(String),
+    MissingAPIKey(String),
+    Hound(hound::Error), // New variant for hound::Error
 }
 
 impl fmt::Display for SharadError {
@@ -22,24 +25,27 @@ impl fmt::Display for SharadError {
             SharadError::SerdeJson(e) => write!(f, "Serde JSON error: {}", e),
             SharadError::Other(e) => write!(f, "Other error: {}", e),
             SharadError::Message(e) => write!(f, "{}", e),
-            SharadError::InvalidMenuSelection(e) => write!(f, "{}", e),
-            SharadError::InputError(e) => write!(f, "{}", e),
-            SharadError::AudioRecordingError(e) => write!(f, "{}", e),
+            SharadError::InvalidMenuSelection(e) => write!(f, "Invalid menu selection: {}", e),
+            SharadError::InputError(e) => write!(f, "Input error: {}", e),
+            SharadError::AudioRecordingError(e) => write!(f, "Audio recording error: {}", e),
+            SharadError::AudioPlaybackError(e) => write!(f, "Audio playback error: {}", e),
+            SharadError::MissingAPIKey(key) => write!(f, "Missing API key: {}", key),
+            SharadError::Hound(e) => write!(f, "Hound error: {}", e), // New display implementation
         }
     }
 }
 
-impl std::error::Error for SharadError {}
+impl Error for SharadError {}
 
 impl From<std::io::Error> for SharadError {
-    fn from(err: std::io::Error) -> Self {
-        SharadError::Io(err)
+    fn from(error: std::io::Error) -> Self {
+        SharadError::Io(error)
     }
 }
 
 impl From<async_openai::error::OpenAIError> for SharadError {
-    fn from(err: async_openai::error::OpenAIError) -> Self {
-        SharadError::OpenAI(err)
+    fn from(error: async_openai::error::OpenAIError) -> Self {
+        SharadError::OpenAI(error)
     }
 }
 
@@ -48,6 +54,7 @@ impl From<serde_json::Error> for SharadError {
         SharadError::SerdeJson(err)
     }
 }
+
 impl From<Box<dyn Error>> for SharadError {
     fn from(err: Box<dyn Error>) -> Self {
         SharadError::Other(err.to_string())
@@ -57,5 +64,11 @@ impl From<Box<dyn Error>> for SharadError {
 impl From<JoinError> for SharadError {
     fn from(err: JoinError) -> Self {
         SharadError::Other(err.to_string())
+    }
+}
+
+impl From<hound::Error> for SharadError {
+    fn from(error: hound::Error) -> Self {
+        SharadError::Hound(error)
     }
 }
