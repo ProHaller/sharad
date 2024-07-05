@@ -125,9 +125,7 @@ pub async fn main_menu(mut log_file: File) -> Result<(), SharadError> {
     }
 
     terminal::disable_raw_mode()?;
-    println!();
     display.print_footer("Thank you for playing Sharad!");
-    println!();
     Ok(())
 }
 

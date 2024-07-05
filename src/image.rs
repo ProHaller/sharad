@@ -56,10 +56,8 @@ pub async fn handle_generated_image(
     image_path: &str,
     display: &mut Display,
 ) -> Result<(), SharadError> {
-    // Log the image path
     display.print_debug(&format!("Image generated: {}", image_path), Color::Magenta);
 
-    // Attempt to open the image
     match open_image(image_path) {
         Ok(_) => {
             display.print_wrapped("Image opened successfully.", Color::Green);
@@ -67,8 +65,6 @@ pub async fn handle_generated_image(
         }
         Err(e) => {
             display.print_wrapped(&format!("Failed to open image: {}", e), Color::Yellow);
-            // We're not returning an error here, as failing to open the image
-            // shouldn't be considered a critical error
             Ok(())
         }
     }
